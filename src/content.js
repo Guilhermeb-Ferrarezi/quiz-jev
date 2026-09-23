@@ -250,14 +250,17 @@ if (!window.__quizJevCarregado) {
     card.replaceChildren();
   }
 
-  function barras(probs, escolhida) {
+  // `escolhidas`: Set de rótulos em destaque — uma única alternativa (modo
+  // "unica") ou várias (modo "multipla", onde o usuário decide se desmarca
+  // alguma olhando a probabilidade individual de cada uma).
+  function barras(probs, escolhidas) {
     if (!probs) return null;
     const container = el("div", "barras");
     const itens = Object.entries(probs).sort((a, b) => b[1] - a[1]);
     const paraAnimar = [];
     for (const [label, p] of itens) {
       const pct = Math.round(p * 100); // único valor calculado por nós — numérico, nunca concatenado em markup
-      const linha = el("div", `barra${label === escolhida ? " escolhida" : ""}`);
+      const linha = el("div", `barra${escolhidas.has(label) ? " escolhida" : ""}`);
       linha.append(el("span", null, label));
       const barra = document.createElement("i");
       // Nasce em 0 (CSS) — só ganha a largura real no rAF abaixo, depois que
@@ -274,16 +277,45 @@ if (!window.__quizJevCarregado) {
     return container;
   }
 
+  // Corta um texto de alternativa longo — a lista de marcadas da múltipla
+  // resposta não pode virar um muro de texto dentro do card.
+  function truncar(texto, max) {
+    if (texto.length <= max) return texto;
+    return `${texto.slice(0, max - 1).trimEnd()}…`;
+  }
+
+  // `opcoes` (d.parsed.options) traz o texto de cada alternativa por rótulo.
+  // Defensivo quanto ao formato: objeto {label: texto} é o esperado, mas
+  // aceita também uma lista de {label|letra, text|texto} sem quebrar o card.
+  function textoDaOpcao(opcoes, label) {
+    if (!opcoes) return "";
+    if (Array.isArray(opcoes)) {
+      const achado = opcoes.find((o) => o && (o.label === label || o.letra === label));
+      return achado ? achado.text || achado.texto || "" : "";
+    }
+    return opcoes[label] || "";
+  }
+
   function mostrarResposta(card, d, rect, comImagem, imagemFalhou) {
     limpar(card);
+    const multipla = d.kind === "multipla";
     // Questão sem alternativas: `kind === "aberta"` é o sinal oficial, mas
     // também cobrimos `answer` vazio — cinturão e suspensório pro caso de
-    // alguém recarregar a extensão antes do backend novo subir.
-    const aberta = d.kind === "aberta" || !d.answer;
-    card.classList.toggle("aberta", aberta);
+    // alguém recarregar a extensão antes do backend novo subir. `multipla`
+    // vem primeiro: nela `answer`/`answerText` vêm vazios por design (a
+    // resposta é `answers`), então cairiam aqui por engano se checados depois.
+    const aberta = !multipla && (d.kind === "aberta" || !d.answer);
+    card.classList.toggle("aberta", aberta || multipla);
     const badge = d.source === "claude" ? "claude" : "jev";
     const linha = el("div", "linha");
-    if (aberta) {
+    const marcadas = multipla && Array.isArray(d.answers) ? d.answers : [];
+    if (multipla) {
+      // Letras marcadas juntas, com o mesmo peso visual da letra única de
+      // hoje (reaproveita a classe .letra).
+      linha.append(el("span", "letra", marcadas.length ? marcadas.join(" · ") : "—"));
+      linha.append(el("span", `badge ${badge}`, badge));
+      linha.append(el("span", "badge", "várias corretas"));
+    } else if (aberta) {
       // Sem letra — não há alternativa nenhuma, e um traço no lugar só
       // confundiria. O texto da resposta é o conteúdo principal aqui.
       linha.append(el("span", "texto texto-aberta", d.answerText || ""));
@@ -298,6 +330,25 @@ if (!window.__quizJevCarregado) {
     // já que o usuário não tem outro sinal disso no card.
     if (comImagem) linha.append(el("span", "badge imagem", "figura"));
     card.append(linha);
+
+    if (multipla) {
+      const opcoes = d.parsed && d.parsed.options;
+      if (marcadas.length) {
+        const lista = el("div", "opcoes-multipla");
+        for (const label of marcadas) {
+          const item = el("div", "opcao-marcada");
+          item.append(el("span", "opcao-letra", label));
+          item.append(el("span", "opcao-texto", truncar(textoDaOpcao(opcoes, label), 120)));
+          lista.append(item);
+        }
+        card.append(lista);
+      } else {
+        // Defensivo: não deveria acontecer (a API sempre marca pelo menos
+        // uma), mas as barras de probabilidade continuam úteis mesmo assim.
+        card.append(el("div", "motivo", "Nenhuma alternativa passou do limiar."));
+      }
+    }
+
     if (d.degraded) {
       card.append(el("div", "aviso", "Confiança baixa — o segundo modelo não respondeu."));
     }
@@ -314,7 +365,11 @@ if (!window.__quizJevCarregado) {
     if (d.reasoning) {
       card.append(el("div", "motivo", d.reasoning));
     }
-    const b = barras(d.probabilities, d.answer);
+    // multipla usa answerProbs (probabilidade de TODAS as alternativas,
+    // marcadas ou não); unica/aberta usam probabilities, como já era.
+    const probs = multipla ? d.answerProbs : d.probabilities;
+    const escolhidas = multipla ? new Set(marcadas) : new Set([d.answer]);
+    const b = barras(probs, escolhidas);
     if (b) card.append(b);
     card.append(dica());
     posicionar(card, rect);
