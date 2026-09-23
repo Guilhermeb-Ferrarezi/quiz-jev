@@ -57,6 +57,12 @@ if (!window.__quizJevCarregado) {
     .badge.imagem { background: #dcfce7; color: #166534; }
     .aviso { margin-top: 8px; font-size: 12px; color: #92400e; }
     .motivo { margin-top: 8px; font-size: 13px; color: #3f3f46; }
+    /* Questão "marque todas que se aplicam" (kind: multipla): lista as
+       alternativas marcadas com seu texto, abaixo da(s) letra(s) grande(s). */
+    .opcoes-multipla { margin-top: 8px; display: grid; gap: 5px; }
+    .opcao-marcada { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+    .opcao-letra { font-weight: 700; flex: 0 0 auto; }
+    .opcao-texto { flex: 1; color: #3f3f46; }
     .barras { margin-top: 10px; display: grid; gap: 3px; }
     .barra { display: grid; grid-template-columns: 18px 1fr 38px; gap: 6px;
              align-items: center; font-size: 12px; color: #52525b; }
@@ -114,6 +120,19 @@ if (!window.__quizJevCarregado) {
   const TAMANHO_MINIMO_PX = 40;
   const LIMITE_BYTES_IMAGEM = 7 * 1024 * 1024; // margem para o teto de 8MB do servidor
   const FOLGA_RECORTE_PX = 8;
+  // captureVisibleTab tolera ~2 chamadas/s antes de lançar erro de rate
+  // limit — espaçar por esse tanto entre capturas evita bater nesse teto na
+  // rolagem-e-costura (ver capturarRegiaoGrande).
+  const ESPACO_MIN_CAPTURAS_MS = 550;
+  // Acima disso (CSS px) no maior lado, reduz a escala do canvas final da
+  // costura — sem isso uma figura muito alta geraria um canvas gigantesco
+  // (lento pra desenhar e pesado antes mesmo do corte por bytes).
+  const LIMITE_LADO_CSS_PX = 4000;
+  // Varrer o documento inteiro em busca de position:fixed/sticky custa uma
+  // getComputedStyle por elemento — em página muito grande isso pesa mais do
+  // que vale (ver ocultarFixos). Acima deste tanto de elementos, desiste e
+  // deixa os fixos/sticky se repetirem nas faixas.
+  const LIMITE_ELEMENTOS_PARA_OCULTAR_FIXOS = 4000;
   // Duração de @keyframes quizJevOut (content.js CSS) + folga — teto de
   // segurança caso o "animationend" não dispare (aba em background throttla
   // rAF/animação em alguns navegadores). Sem isso um fechar() nessas
@@ -255,7 +274,7 @@ if (!window.__quizJevCarregado) {
     return container;
   }
 
-  function mostrarResposta(card, d, rect, comImagem) {
+  function mostrarResposta(card, d, rect, comImagem, imagemFalhou) {
     limpar(card);
     // Questão sem alternativas: `kind === "aberta"` é o sinal oficial, mas
     // também cobrimos `answer` vazio — cinturão e suspensório pro caso de
@@ -281,6 +300,13 @@ if (!window.__quizJevCarregado) {
     card.append(linha);
     if (d.degraded) {
       card.append(el("div", "aviso", "Confiança baixa — o segundo modelo não respondeu."));
+    }
+    // A imagem só falha depois de já ter tentado arquivo original, print único
+    // e (se preciso) rolagem-e-costura com nova tentativa — nesse ponto a
+    // questão já foi mandada só com texto, e o card avisa isso em vez de
+    // fingir que não tinha figura nenhuma.
+    if (imagemFalhou) {
+      card.append(el("div", "aviso", "Não consegui enviar a figura desta questão — respondida só com o texto."));
     }
     // reasoning vem preenchido sempre que a resposta veio do estágio
     // escalado (source: "claude"), não só quando `explain` foi pedido —
@@ -457,6 +483,393 @@ if (!window.__quizJevCarregado) {
     throw new Error("não consegui reduzir a imagem o suficiente");
   }
 
+  function esperar(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Dois rAF seguidos garantem que o navegador já pintou o frame pós-scroll
+  // (um só rAF às vezes roda ANTES do reflow de scroll terminar); a pausa
+  // curta é folga extra pra fontes/imagens lazy que pintam um frame depois.
+  function esperarPintura() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60)));
+    });
+  }
+
+  // Uma nova tentativa depois de uma pausa — cobre tanto um erro de rede
+  // pontual quanto o rate limit de ~2 capturas/s do captureVisibleTab.
+  async function capturarComRetentativa() {
+    let resp = await api.runtime.sendMessage({ type: "print" });
+    if (!resp?.ok) {
+      await esperar(ESPACO_MIN_CAPTURAS_MS);
+      resp = await api.runtime.sendMessage({ type: "print" });
+    }
+    return resp;
+  }
+
+  function bytesDeBase64(base64) {
+    return Math.ceil((base64.length * 3) / 4);
+  }
+
+  // Codifica um canvas já pronto respeitando o teto de bytes do servidor:
+  // reduz a escala em PNG (mesma estratégia de recortarImagem) e, se ainda
+  // assim não couber, cai pra JPEG (o backend aceita) — só esse formato tem
+  // compressão de verdade pra foto/gráfico complexo.
+  function canvasParaBase64ComLimite(canvasOriginal) {
+    let atual = canvasOriginal;
+    for (let tentativa = 0; tentativa < 6; tentativa++) {
+      const dataUrl = atual.toDataURL("image/png");
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      if (bytesDeBase64(base64) <= LIMITE_BYTES_IMAGEM) return { base64, mime: "image/png" };
+      const menor = document.createElement("canvas");
+      menor.width = Math.max(1, Math.round(atual.width * 0.7));
+      menor.height = Math.max(1, Math.round(atual.height * 0.7));
+      menor.getContext("2d").drawImage(atual, 0, 0, menor.width, menor.height);
+      atual = menor;
+    }
+    const dataUrlJpeg = atual.toDataURL("image/jpeg", 0.85);
+    return { base64: dataUrlJpeg.slice(dataUrlJpeg.indexOf(",") + 1), mime: "image/jpeg" };
+  }
+
+  // ---- Caminho principal: arquivo original da(s) <img>/<picture> ----
+  // Prioridade do dono do projeto: ler o arquivo da imagem em vez de
+  // fotografar a tela, sempre que a seleção encostar só em <img>/<picture> —
+  // sai em qualidade original e não depende de a figura caber na viewport.
+
+  const MIMES_ACEITOS_DIRETO = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+  function elementoImagemReal(elemento) {
+    if (elemento.tagName === "IMG") return elemento;
+    if (elemento.tagName === "PICTURE") return elemento.querySelector("img");
+    return null;
+  }
+
+  async function aguardarImagemCarregada(img) {
+    if (img.complete && img.naturalWidth > 0) return;
+    try {
+      await img.decode();
+    } catch (e) {
+      // segue mesmo assim — os passos seguintes falham e caem pro plano B
+    }
+  }
+
+  async function blobParaBase64(blob) {
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binario = "";
+    const TAMANHO_BLOCO = 0x8000; // evita estourar o limite de argumentos de fromCharCode num blob grande
+    for (let i = 0; i < bytes.length; i += TAMANHO_BLOCO) {
+      binario += String.fromCharCode(...bytes.subarray(i, i + TAMANHO_BLOCO));
+    }
+    return btoa(binario);
+  }
+
+  async function converterBlobParaPngBase64(blob) {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error("falha ao decodificar imagem baixada"));
+        img.src = url;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL("image/png");
+      return dataUrl.slice(dataUrl.indexOf(",") + 1);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // Tentativa 1: busca o arquivo original por HTTP. Funciona pra imagem da
+  // mesma origem e pra a maioria das imagens com CORS liberado (CDN de
+  // imagem de prova costuma liberar). Falha de rede/CORS vira null — quem
+  // chama tenta o canvas em seguida.
+  async function baixarImagemDeArquivo(img) {
+    const src = img.currentSrc || img.src;
+    if (!src) return null;
+    try {
+      const res = await fetch(src);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (MIMES_ACEITOS_DIRETO.has(blob.type)) {
+        return { base64: await blobParaBase64(blob), mime: blob.type };
+      }
+      return { base64: await converterBlobParaPngBase64(blob), mime: "image/png" };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Tentativa 2: desenha o <img> (já carregado na página) direto num canvas.
+  // Se a imagem for cross-origin sem cabeçalho CORS, o canvas fica "tainted"
+  // e toDataURL lança SecurityError — nesse caso não tem mais o que fazer
+  // por essa imagem específica (plano B assume a partir daqui).
+  async function desenharImgEmCanvas(img) {
+    await aguardarImagemCarregada(img);
+    if (!img.naturalWidth || !img.naturalHeight) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    try {
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL("image/png");
+      return { base64: dataUrl.slice(dataUrl.indexOf(",") + 1), mime: "image/png" };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function obterImagemDeArquivo(img) {
+    await aguardarImagemCarregada(img);
+    const viaFetch = await baixarImagemDeArquivo(img);
+    if (viaFetch) return viaFetch;
+    return await desenharImgEmCanvas(img);
+  }
+
+  function aplicarTetoDeLado(canvas) {
+    const maiorLado = Math.max(canvas.width, canvas.height);
+    if (maiorLado <= LIMITE_LADO_CSS_PX) return canvas;
+    const escala = LIMITE_LADO_CSS_PX / maiorLado;
+    const menor = document.createElement("canvas");
+    menor.width = Math.max(1, Math.round(canvas.width * escala));
+    menor.height = Math.max(1, Math.round(canvas.height * escala));
+    menor.getContext("2d").drawImage(canvas, 0, 0, menor.width, menor.height);
+    return menor;
+  }
+
+  // Decodifica cada {base64, mime} baixado e junta tudo num único canvas —
+  // empilhado verticalmente quando há mais de um, cada imagem escalada pra
+  // largura comum (a maior entre elas) preservando proporção.
+  async function montarImagemDeArquivos(itens) {
+    const imgs = await Promise.all(
+      itens.map(
+        (it) =>
+          new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("falha ao decodificar imagem de arquivo"));
+            img.src = `data:${it.mime};base64,${it.base64}`;
+          })
+      )
+    );
+
+    if (imgs.length === 1) {
+      const unico = imgs[0];
+      const canvas = document.createElement("canvas");
+      canvas.width = unico.naturalWidth;
+      canvas.height = unico.naturalHeight;
+      canvas.getContext("2d").drawImage(unico, 0, 0);
+      return aplicarTetoDeLado(canvas);
+    }
+
+    const largura = Math.max(...imgs.map((im) => im.naturalWidth));
+    const alturas = imgs.map((im) => (im.naturalHeight * largura) / im.naturalWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = largura;
+    canvas.height = alturas.reduce((a, b) => a + b, 0);
+    const ctx = canvas.getContext("2d");
+    let y = 0;
+    for (let i = 0; i < imgs.length; i++) {
+      ctx.drawImage(imgs[i], 0, y, largura, alturas[i]);
+      y += alturas[i];
+    }
+    return aplicarTetoDeLado(canvas);
+  }
+
+  // Se QUALQUER imagem do conjunto falhar nos dois métodos, desiste do
+  // conjunto inteiro — não faz sentido mandar uma figura pela metade quando
+  // a questão tinha duas imagens lado a lado, por exemplo. Quem chama cai
+  // pro plano B (print da tela) pra seleção inteira.
+  async function capturarImagemDeArquivo(imgsRelevantes) {
+    const resultados = [];
+    for (const img of imgsRelevantes) {
+      const r = await obterImagemDeArquivo(img);
+      if (!r) return null;
+      resultados.push(r);
+    }
+    try {
+      const canvas = await montarImagemDeArquivos(resultados);
+      return canvasParaBase64ComLimite(canvas);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ---- Plano B: captura de tela, com rolagem-e-costura quando não cabe ----
+
+  // position:fixed/sticky "flutua" e apareceria repetido em cada faixa da
+  // costura — oculta pela duração da captura inteira (uma varredura só, não
+  // por faixa). Em página com DOM enorme o custo de varrer tudo não compensa
+  // (ver LIMITE_ELEMENTOS_PARA_OCULTAR_FIXOS): melhor deixar o fixo repetir
+  // do que travar a captura por causa dele.
+  function ocultarFixos() {
+    if (!document.body) return [];
+    const todos = document.body.querySelectorAll("*");
+    if (todos.length > LIMITE_ELEMENTOS_PARA_OCULTAR_FIXOS) return [];
+    const alterados = [];
+    for (const elemento of todos) {
+      const pos = getComputedStyle(elemento).position;
+      if (pos === "fixed" || pos === "sticky") {
+        alterados.push([elemento, elemento.style.visibility]);
+        elemento.style.visibility = "hidden";
+      }
+    }
+    return alterados;
+  }
+
+  function restaurarFixos(alterados) {
+    for (const [elemento, valorOriginal] of alterados) {
+      elemento.style.visibility = valorOriginal;
+    }
+  }
+
+  // `uniao` está em coordenadas de viewport (getBoundingClientRect) — soma o
+  // scroll atual pra virar coordenada de DOCUMENTO, estável mesmo rolando a
+  // página pra tirar as várias faixas.
+  function regiaoParaDocumento(uniao) {
+    return {
+      left: uniao.left + window.scrollX,
+      top: uniao.top + window.scrollY,
+      right: uniao.right + window.scrollX,
+      bottom: uniao.bottom + window.scrollY,
+      width: uniao.width,
+      height: uniao.height,
+    };
+  }
+
+  function calcularFaixas(regiaoDoc, vw, vh) {
+    const faixas = [];
+    for (let y = regiaoDoc.top; y < regiaoDoc.bottom; y += vh) {
+      for (let x = regiaoDoc.left; x < regiaoDoc.right; x += vw) {
+        faixas.push({ x, y });
+      }
+    }
+    return faixas;
+  }
+
+  // Desenha cada print (viewport inteiro, em pixels FÍSICOS) na posição certa
+  // do canvas final, sem recortar sub-retângulo: o que sobra fora da área da
+  // faixa é cortado pelo próprio canvas. Onde faixas se sobrepõem, a última
+  // desenhada (mais recente) fica por cima.
+  async function montarImagemFinal(capturas, regiaoDoc) {
+    const imgs = await Promise.all(
+      capturas.map(
+        (c) =>
+          new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("falha ao carregar print da costura"));
+            img.src = c.dataUrl;
+          })
+      )
+    );
+
+    const dpr = window.devicePixelRatio || 1;
+    let resFactor = dpr;
+    const maiorLadoCss = Math.max(regiaoDoc.width, regiaoDoc.height);
+    if (maiorLadoCss > LIMITE_LADO_CSS_PX) resFactor *= LIMITE_LADO_CSS_PX / maiorLadoCss;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(regiaoDoc.width * resFactor));
+    canvas.height = Math.max(1, Math.round(regiaoDoc.height * resFactor));
+    const ctx = canvas.getContext("2d");
+
+    for (let i = 0; i < imgs.length; i++) {
+      const img = imgs[i];
+      const { x, y } = capturas[i];
+      const dx = (x - regiaoDoc.left) * resFactor;
+      const dy = (y - regiaoDoc.top) * resFactor;
+      const dw = (img.width / dpr) * resFactor;
+      const dh = (img.height / dpr) * resFactor;
+      ctx.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
+    }
+
+    return canvasParaBase64ComLimite(canvas);
+  }
+
+  // Rola a página em faixas do tamanho da viewport, tira um print por faixa
+  // (espaçados pra não bater no rate limit) e costura tudo num canvas só.
+  // Cobre também o caso "cabe numa viewport só, mas está fora da tela agora"
+  // (calcularFaixas gera uma faixa única — rola até lá e tira um print).
+  // Restaura rolagem, fixos e visibilidade do card em QUALQUER saída.
+  async function capturarRegiaoGrande(uniaoViewport, card, rect, host) {
+    const regiaoDoc = regiaoParaDocumento(uniaoViewport);
+    const faixas = calcularFaixas(regiaoDoc, window.innerWidth, window.innerHeight);
+    const scrollXOriginal = window.scrollX;
+    const scrollYOriginal = window.scrollY;
+    const alteradosFixos = ocultarFixos();
+    const capturas = [];
+
+    try {
+      for (let i = 0; i < faixas.length; i++) {
+        if (!document.getElementById(ID)) break; // usuário fechou o card no meio da costura
+
+        mostrarCarregando(card, `Capturando a figura (${i + 1}/${faixas.length})…`, rect);
+        await new Promise((resolve) => requestAnimationFrame(resolve)); // deixa o texto pintar antes de esconder
+
+        if (host) host.style.visibility = "hidden";
+        window.scrollTo(faixas[i].x, faixas[i].y);
+        await esperarPintura();
+
+        const printResp = await capturarComRetentativa();
+        if (host) host.style.visibility = "visible";
+
+        if (!printResp?.ok) return null; // falhou mesmo depois da nova tentativa — desiste da imagem
+        capturas.push({ dataUrl: printResp.dataUrl, x: window.scrollX, y: window.scrollY });
+      }
+    } finally {
+      restaurarFixos(alteradosFixos);
+      window.scrollTo(scrollXOriginal, scrollYOriginal);
+      if (host) host.style.visibility = "visible";
+    }
+
+    if (!capturas.length) return null;
+    try {
+      return await montarImagemFinal(capturas, regiaoDoc);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Resolve a imagem de uma seleção com conteúdo visual, na ordem de
+  // prioridade do dono do projeto: (1) arquivo original de cada <img>/
+  // <picture> — só quando TODOS os elementos visuais da seleção forem
+  // img/picture, senão a mistura (ex. canvas + img) cai direto pro plano B;
+  // (2) print da tela, único se a união couber na viewport; (3) rolagem-e-
+  // costura quando não couber. Nunca lança — retorna null se tudo falhar, e
+  // quem chama manda a questão só com o texto.
+  async function resolverImagemDaSelecao(visuais, rect, card) {
+    const imgsRelevantes = visuais.map(elementoImagemReal).filter(Boolean);
+    if (imgsRelevantes.length === visuais.length) {
+      mostrarCarregando(card, "Lendo a imagem…", rect);
+      const resultado = await capturarImagemDeArquivo(imgsRelevantes);
+      if (!document.getElementById(ID)) return null;
+      if (resultado) return resultado;
+    }
+
+    const uniao = uniaoComFolga([rect, ...visuais.map((elemento) => elemento.getBoundingClientRect())], FOLGA_RECORTE_PX);
+
+    if (cabeNaViewport(uniao)) {
+      mostrarCarregando(card, "Capturando a tela…", rect);
+      const printResp = await capturarComRetentativa();
+      if (!document.getElementById(ID)) return null;
+      if (!printResp?.ok) return null;
+      mostrarCarregando(card, "Recortando a imagem…", rect);
+      try {
+        const base64 = await recortarImagem(printResp.dataUrl, uniao);
+        return { base64, mime: "image/png" };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    return await capturarRegiaoGrande(uniao, card, rect, document.getElementById(ID));
+  }
+
   // Este listener nunca chama sendResponse (o background só espera a entrega
   // da mensagem, não um resultado — ver background.js), então não precisa de
   // `return true`: funciona igual nos dois navegadores. O trabalho async fica
@@ -489,36 +902,27 @@ if (!window.__quizJevCarregado) {
     // 150ms de hoje, e a maioria das questões é puro texto.
     const visuais = encontrarElementosVisuais(range);
 
+    // A imagem TEM que ser enviada de algum jeito — bloquear a questão
+    // porque a figura não coube na tela não é aceitável. resolverImagemDaSelecao
+    // só devolve null se arquivo original, print único E rolagem-e-costura
+    // (com nova tentativa) falharem todos; nesse caso a questão segue só com
+    // o texto, e o card avisa isso depois da resposta (ver mostrarResposta).
+    let imagemFalhou = false;
     if (visuais.length) {
-      const uniao = uniaoComFolga([rect, ...visuais.map((elemento) => elemento.getBoundingClientRect())], FOLGA_RECORTE_PX);
-      if (!cabeNaViewport(uniao)) {
-        // captureVisibleTab só fotografa o que está na viewport. Mandar um
-        // recorte cortado seria pior que não responder — o modelo veria uma
-        // figura incompleta. Melhor parar aqui e não gastar a chamada.
-        mostrarErro(card, "A figura da questão não cabe inteira na tela. Role até ela ficar totalmente visível e tente de novo.", rect);
-        return;
-      }
-      mostrarCarregando(card, "Capturando a tela…", rect);
-      const printResp = await api.runtime.sendMessage({ type: "print" });
+      const resultado = await resolverImagemDaSelecao(visuais, rect, card);
       if (!document.getElementById(ID)) return; // usuário fechou enquanto carregava
-      if (!printResp?.ok) {
-        mostrarErro(card, printResp?.error || "Não consegui capturar a tela.", rect);
-        return;
-      }
-      mostrarCarregando(card, "Recortando a imagem…", rect);
-      try {
-        ctx.imageBase64 = await recortarImagem(printResp.dataUrl, uniao);
-        ctx.imageMime = "image/png";
-      } catch (e) {
-        mostrarErro(card, "Não consegui recortar a imagem da questão.", rect);
-        return;
+      if (resultado) {
+        ctx.imageBase64 = resultado.base64;
+        ctx.imageMime = resultado.mime;
+      } else {
+        imagemFalhou = true;
       }
     }
 
     mostrarCarregando(card, ctx.imageBase64 ? "Analisando a imagem…" : "Consultando…", rect);
     const resp = await api.runtime.sendMessage({ type: "ask", raw, imageBase64: ctx.imageBase64, imageMime: ctx.imageMime });
     if (!document.getElementById(ID)) return; // usuário fechou enquanto carregava
-    if (resp?.ok) mostrarResposta(card, resp.data, rect, !!ctx.imageBase64);
+    if (resp?.ok) mostrarResposta(card, resp.data, rect, !!ctx.imageBase64, imagemFalhou);
     else mostrarErro(card, resp?.error, rect);
   }
 }
