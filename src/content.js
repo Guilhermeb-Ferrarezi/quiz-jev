@@ -17,7 +17,13 @@ if (!window.__quizJevCarregado) {
   // site de prova costuma ter CSS agressivo.
   const CSS = `
     :host { all: initial; }
-    @keyframes quizJevIn { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+    /* Entrada com efeito de mola: passa um pouco do tamanho final (scale
+       1.12 dentro do cubic-bezier) e assenta — bem mais marcante que um
+       simples fade. A saída (quizJevOut) continua rápida, sem mola. */
+    @keyframes quizJevIn {
+      from { opacity: 0; transform: translateY(-10px) scale(.94); }
+      to { opacity: 1; transform: none; }
+    }
     @keyframes quizJevOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-4px) scale(.97); } }
     @keyframes quizJevShake {
       10%, 90% { transform: translateX(-1px); }
@@ -25,14 +31,27 @@ if (!window.__quizJevCarregado) {
       30%, 50%, 70% { transform: translateX(-4px); }
       40%, 60% { transform: translateX(4px); }
     }
-    @keyframes quizJevPulse { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+    /* "Pop" da letra da resposta: escala além do tamanho final e volta, com
+       um brilho colorido que acende e apaga — usado tanto na letra única
+       (.letra-pop) quanto em cada letra da múltipla resposta (.letra-item,
+       uma por vez, em cascata via animation-delay definido em JS). */
+    @keyframes quizJevPop {
+      0% { opacity: 0; transform: scale(.6); text-shadow: 0 0 0 rgba(37,99,235,0); }
+      55% { opacity: 1; transform: scale(1.12); text-shadow: 0 0 16px rgba(37,99,235,.6); }
+      100% { opacity: 1; transform: scale(1); text-shadow: 0 0 0 rgba(37,99,235,0); }
+    }
+    /* Entrada em cascata do conteúdo novo (ver .item-cascata) — cada item
+       recebe um animation-delay maior que o anterior, definido em JS. */
+    @keyframes quizJevItemIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+    /* Brilho diagonal em loop, só durante o carregamento (ver .carregando-ativo). */
+    @keyframes quizJevShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
     .card {
       position: fixed; z-index: 2147483647; max-width: 340px;
       max-height: min(60vh, 420px); overflow-y: auto;
       font: 14px/1.45 system-ui, sans-serif; color: #111;
       background: #fff; border: 1px solid #d4d4d8; border-radius: 10px;
       box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 12px 14px;
-      animation: quizJevIn 160ms ease-out;
+      animation: quizJevIn 350ms cubic-bezier(.34,1.56,.64,1);
     }
     /* .fechando: aplicada no instante de fechar (ver fechar()) — o card só
        some da DOM depois que esta animação termina (animationend), pra não
@@ -40,9 +59,30 @@ if (!window.__quizJevCarregado) {
     .card.fechando { animation: quizJevOut 120ms ease-in forwards; }
     .card.erro-anim { animation: quizJevShake 320ms ease-in-out; }
     .card.aberta { max-width: 420px; }
+    /* Durante o carregamento (mostrarCarregando) — o shimmer é um ::before
+       por cima de todo o card; overflow:hidden mantém ele dentro do
+       border-radius. position:fixed já vem de .card, então o ::before
+       (absolute) já tem nele o ancestral posicionado certo. */
+    .card.carregando-ativo { overflow: hidden; }
+    .card.carregando-ativo::before {
+      content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+      background: linear-gradient(115deg, transparent 35%, rgba(37,99,235,.16) 50%, transparent 65%);
+      background-size: 200% 100%;
+      animation: quizJevShimmer 1.4s linear infinite;
+    }
     .linha { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-    .letra { font-size: 28px; font-weight: 700; line-height: 1; }
+    .letra { font-size: 28px; font-weight: 700; line-height: 1; display: inline-flex; align-items: baseline; }
+    /* .letra-pop: a letra única inteira "pop". .letra-item: cada letra da
+       múltipla resposta, uma de cada vez (animation-delay em JS) — nesse
+       caso .letra vira só um container flex, sem animação própria, pra não
+       somar um segundo "pop" por cima dos das letras individuais. */
+    .letra-pop, .letra-item { display: inline-block; animation: quizJevPop 450ms cubic-bezier(.34,1.56,.64,1) backwards; }
+    .letra-separador { opacity: .55; }
     .texto { flex: 1; }
+    /* Cascata do conteúdo que chega depois da letra (texto, badges, avisos,
+       barras…) — cada item marcado com esta classe recebe um animation-delay
+       maior que o anterior, definido em JS (ver emCascata em mostrarResposta). */
+    .item-cascata { animation: quizJevItemIn 240ms ease-out backwards; }
     /* Resposta de questão sem alternativas: sem letra, então o texto vira o
        conteúdo principal — flex-basis 100% derruba badge(s) pra linha de
        baixo, e a entrelinha maior ajuda num parágrafo de até ~600 chars. */
@@ -73,14 +113,13 @@ if (!window.__quizJevCarregado) {
                width: 0; transition: width 420ms cubic-bezier(.16,1,.3,1); }
     .barra.escolhida i { background: #2563eb; }
     .erro { color: #b91c1c; }
-    .carregando { display: flex; align-items: center; gap: 2px; color: #52525b; font-size: 13px; }
-    .carregando .pontos { display: inline-flex; gap: 3px; margin-left: 3px; }
-    .carregando .pontos i {
-      width: 4px; height: 4px; border-radius: 50%; background: currentColor; display: block;
-      animation: quizJevPulse 1.1s ease-in-out infinite;
-    }
-    .carregando .pontos i:nth-child(2) { animation-delay: .15s; }
-    .carregando .pontos i:nth-child(3) { animation-delay: .3s; }
+    /* position/z-index: fica por cima do ::before do shimmer (ver .card.carregando-ativo). */
+    .carregando { position: relative; z-index: 1; display: flex; align-items: center; color: #52525b; font-size: 13px; }
+    /* Barra fina de progresso "aproximado" — só aparece quando mostrarCarregando
+       recebe um progresso (0..1), usada na captura de imagem (lendo arquivo,
+       print, recortando/costurando, analisando). Não precisa ser exata. */
+    .progresso { position: relative; z-index: 1; margin-top: 10px; height: 3px; border-radius: 999px; background: #e4e4e7; overflow: hidden; }
+    .progresso i { display: block; height: 100%; width: 0; background: #2563eb; border-radius: 999px; transition: width 400ms ease-out; }
     .dica { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e4e4e7; font-size: 11px; color: #a1a1aa; }
     .dica kbd { font: inherit; padding: 1px 5px; border-radius: 4px; background: #f4f4f5;
                 border: 1px solid #e4e4e7; color: #52525b; }
@@ -101,15 +140,22 @@ if (!window.__quizJevCarregado) {
       .badge.claude { background: #4c1d95; color: #ddd6fe; }
       .badge.imagem { background: #14532d; color: #bbf7d0; }
       .carregando { color: #a1a1aa; }
+      .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); }
+      .progresso { background: #3f3f46; }
       .dica { border-color: #3f3f46; }
       .dica kbd { background: #27272a; border-color: #3f3f46; color: #d4d4d8; }
       .pergunta-label { color: #d4d4d8; }
       .pergunta-input { background: #27272a; border-color: #3f3f46; color: #fafafa; }
     }
-    /* Quem pede menos movimento não devia ganhar um card saltitante. */
+    /* Quem pede menos movimento não devia ganhar um card saltitante — desliga
+       TODAS as animações novas também: pop da letra, cascata do conteúdo,
+       shimmer do carregamento e (via a regra de .card abaixo, que também some
+       com a transição inline de altura que trocarConteudo() define em JS) o
+       ajuste suave de altura entre estados. */
     @media (prefers-reduced-motion: reduce) {
-      .card, .card.fechando, .card.erro-anim, .carregando .pontos i { animation: none !important; }
-      .barra i { transition: none !important; }
+      .card, .card.fechando, .card.erro-anim, .letra-pop, .letra-item, .item-cascata { animation: none !important; }
+      .card.carregando-ativo::before { animation: none !important; opacity: 0; }
+      .barra i, .progresso i, .card { transition: none !important; }
     }
   `;
 
@@ -138,6 +184,20 @@ if (!window.__quizJevCarregado) {
   // rAF/animação em alguns navegadores). Sem isso um fechar() nessas
   // condições deixaria o card fantasma na tela pra sempre.
   const DURACAO_SAIDA_MS = 200;
+  // Duração da transição de altura entre estados (ver trocarConteudo) — perto
+  // do que o CSS já usa pras barras (420ms) mas mais curta, porque aqui é só
+  // um redimensionamento do card, não o "preenchimento" de uma barra.
+  const DURACAO_ALTURA_MS = 250;
+  // Atraso entre um item e o próximo na cascata de entrada do conteúdo novo
+  // (ver emCascata em mostrarResposta) e entre uma letra e a próxima na
+  // múltipla resposta (ambos em JS, via animation-delay — CSS puro não dá
+  // pra escalonar uma lista de tamanho dinâmico sem isso).
+  const ATRASO_CASCATA_PASSO_MS = 60;
+  const ATRASO_LETRA_ITEM_MS = 80;
+  // Checada em JS onde uma animação é feita via `transition`/`style` inline
+  // (não dá pra desligar só com o `@media (prefers-reduced-motion)` do CSS,
+  // que só alcança `animation`/`transition` declaradas na folha de estilo).
+  const REDUZIR_MOVIMENTO = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   // Contexto da seleção atual (raw, rect, imagem, e o próprio card) — vive
   // enquanto o overlay está aberto, e é o que a tecla T (ver aoTeclar) usa
@@ -204,8 +264,11 @@ if (!window.__quizJevCarregado) {
   // e vazaria do viewport. Prefere abrir ABAIXO da seleção; só sobe quando
   // não couber embaixo. O max-height/overflow-y do CSS é o último recurso
   // pro caso extremo de nem cabendo entre topo e rodapé.
-  function posicionar(card, rect) {
-    const altura = card.offsetHeight || 40;
+  function posicionar(card, rect, alturaForcada) {
+    // `alturaForcada`: usada por trocarConteudo() pra reposicionar já com a
+    // altura FINAL do conteúdo novo, nunca com a intermediária (offsetHeight
+    // leria o valor animando no meio da transição de altura).
+    const altura = alturaForcada || card.offsetHeight || 40;
     const largura = card.offsetWidth || 340;
     let topo = rect.bottom + 8;
     if (topo + altura > window.innerHeight - 8) {
@@ -248,6 +311,40 @@ if (!window.__quizJevCarregado) {
 
   function limpar(card) {
     card.replaceChildren();
+  }
+
+  // Troca o conteúdo do card com uma transição suave de altura: mede a
+  // altura ATUAL, trava ela via inline style, deixa `montar()` limpar e
+  // popular o conteúdo novo, mede a altura resultante (scrollHeight ignora o
+  // `height` travado — é a altura "natural" do conteúdo novo) e anima entre
+  // as duas. Volta pra `height: auto` (removendo o inline style) no fim, com
+  // o mesmo padrão de transitionend + timeout de segurança que fechar() já
+  // usa pra saída — sem isso um transitionend que não dispara (aba em
+  // background, ou a duração calculada bater errado) deixaria o card preso
+  // num height fixo pra sempre. Reposiciona com a altura FINAL (nunca com a
+  // intermediária), pra não estragar o clamp de topo/esquerda de posicionar().
+  function trocarConteudo(card, rect, montar) {
+    const alturaAntes = card.offsetHeight;
+    card.style.height = `${alturaAntes}px`;
+    limpar(card);
+    montar();
+    const alturaDepois = card.scrollHeight;
+
+    const finalizarAltura = () => {
+      card.style.transition = "";
+      card.style.height = "";
+    };
+    if (REDUZIR_MOVIMENTO.matches || alturaDepois === alturaAntes) {
+      finalizarAltura();
+    } else {
+      void card.offsetHeight; // reflow forçado — mesmo truque do erro-anim em mostrarErro, garante que a transição realmente anime
+      card.style.transition = `height ${DURACAO_ALTURA_MS}ms ease-out`;
+      card.style.height = `${alturaDepois}px`;
+      card.addEventListener("transitionend", finalizarAltura, { once: true });
+      setTimeout(finalizarAltura, DURACAO_ALTURA_MS + 50);
+    }
+
+    posicionar(card, rect, alturaDepois);
   }
 
   // `escolhidas`: Set de rótulos em destaque — uma única alternativa (modo
@@ -297,82 +394,111 @@ if (!window.__quizJevCarregado) {
   }
 
   function mostrarResposta(card, d, rect, comImagem, imagemFalhou) {
-    limpar(card);
-    const multipla = d.kind === "multipla";
-    // Questão sem alternativas: `kind === "aberta"` é o sinal oficial, mas
-    // também cobrimos `answer` vazio — cinturão e suspensório pro caso de
-    // alguém recarregar a extensão antes do backend novo subir. `multipla`
-    // vem primeiro: nela `answer`/`answerText` vêm vazios por design (a
-    // resposta é `answers`), então cairiam aqui por engano se checados depois.
-    const aberta = !multipla && (d.kind === "aberta" || !d.answer);
-    card.classList.toggle("aberta", aberta || multipla);
-    const badge = d.source === "claude" ? "claude" : "jev";
-    const linha = el("div", "linha");
-    const marcadas = multipla && Array.isArray(d.answers) ? d.answers : [];
-    if (multipla) {
-      // Letras marcadas juntas, com o mesmo peso visual da letra única de
-      // hoje (reaproveita a classe .letra).
-      linha.append(el("span", "letra", marcadas.length ? marcadas.join(" · ") : "—"));
-      linha.append(el("span", `badge ${badge}`, badge));
-      linha.append(el("span", "badge", "várias corretas"));
-    } else if (aberta) {
-      // Sem letra — não há alternativa nenhuma, e um traço no lugar só
-      // confundiria. O texto da resposta é o conteúdo principal aqui.
-      linha.append(el("span", "texto texto-aberta", d.answerText || ""));
-      linha.append(el("span", `badge ${badge}`, badge));
-    } else {
-      linha.append(el("span", "letra", d.answer));
-      linha.append(el("span", "texto", d.answerText || ""));
-      linha.append(el("span", `badge ${badge}`, badge));
-    }
-    // Resposta com imagem não traz probabilities (não houve veredito do
-    // modelo rápido) — badge extra deixa claro que a figura foi considerada,
-    // já que o usuário não tem outro sinal disso no card.
-    if (comImagem) linha.append(el("span", "badge imagem", "figura"));
-    card.append(linha);
+    trocarConteudo(card, rect, () => {
+      card.classList.remove("carregando-ativo");
+      const multipla = d.kind === "multipla";
+      // Questão sem alternativas: `kind === "aberta"` é o sinal oficial, mas
+      // também cobrimos `answer` vazio — cinturão e suspensório pro caso de
+      // alguém recarregar a extensão antes do backend novo subir. `multipla`
+      // vem primeiro: nela `answer`/`answerText` vêm vazios por design (a
+      // resposta é `answers`), então cairiam aqui por engano se checados depois.
+      const aberta = !multipla && (d.kind === "aberta" || !d.answer);
+      card.classList.toggle("aberta", aberta || multipla);
+      const badge = d.source === "claude" ? "claude" : "jev";
+      const linha = el("div", "linha");
+      const marcadas = multipla && Array.isArray(d.answers) ? d.answers : [];
 
-    if (multipla) {
-      const opcoes = d.parsed && d.parsed.options;
-      if (marcadas.length) {
-        const lista = el("div", "opcoes-multipla");
-        for (const label of marcadas) {
-          const item = el("div", "opcao-marcada");
-          item.append(el("span", "opcao-letra", label));
-          item.append(el("span", "opcao-texto", truncar(textoDaOpcao(opcoes, label), 120)));
-          lista.append(item);
+      // Cascata: cada item depois da letra entra com um atraso maior que o
+      // anterior (fade + leve subida, ver .item-cascata no CSS). A letra em
+      // si não usa isso — ela tem o próprio "pop" (.letra-pop/.letra-item).
+      let atrasoCascata = ATRASO_CASCATA_PASSO_MS;
+      const emCascata = (elemento) => {
+        elemento.classList.add("item-cascata");
+        elemento.style.animationDelay = `${atrasoCascata}ms`;
+        atrasoCascata += ATRASO_CASCATA_PASSO_MS;
+        return elemento;
+      };
+
+      if (multipla) {
+        // Cada letra marcada entra com o próprio "pop", em cascata entre
+        // elas (ATRASO_LETRA_ITEM_MS) — não junta tudo num texto só, senão
+        // não dá pra animar cada letra separadamente.
+        const letraContainer = el("span", "letra");
+        if (marcadas.length) {
+          marcadas.forEach((label, i) => {
+            if (i > 0) letraContainer.append(el("span", "letra-separador", " · "));
+            const item = el("span", "letra-item", label);
+            item.style.animationDelay = `${i * ATRASO_LETRA_ITEM_MS}ms`;
+            letraContainer.append(item);
+          });
+        } else {
+          letraContainer.append(document.createTextNode("—"));
         }
-        card.append(lista);
+        linha.append(letraContainer);
+        linha.append(emCascata(el("span", `badge ${badge}`, badge)));
+        linha.append(emCascata(el("span", "badge", "várias corretas")));
+      } else if (aberta) {
+        // Sem letra — não há alternativa nenhuma, e um traço no lugar só
+        // confundiria. O texto da resposta é o conteúdo principal aqui.
+        linha.append(emCascata(el("span", "texto texto-aberta", d.answerText || "")));
+        linha.append(emCascata(el("span", `badge ${badge}`, badge)));
       } else {
-        // Defensivo: não deveria acontecer (a API sempre marca pelo menos
-        // uma), mas as barras de probabilidade continuam úteis mesmo assim.
-        card.append(el("div", "motivo", "Nenhuma alternativa passou do limiar."));
+        linha.append(el("span", "letra letra-pop", d.answer));
+        linha.append(emCascata(el("span", "texto", d.answerText || "")));
+        linha.append(emCascata(el("span", `badge ${badge}`, badge)));
       }
-    }
+      // Resposta com imagem não traz probabilities (não houve veredito do
+      // modelo rápido) — badge extra deixa claro que a figura foi considerada,
+      // já que o usuário não tem outro sinal disso no card.
+      if (comImagem) linha.append(emCascata(el("span", "badge imagem", "figura")));
+      card.append(linha);
 
-    if (d.degraded) {
-      card.append(el("div", "aviso", "Confiança baixa — o segundo modelo não respondeu."));
-    }
-    // A imagem só falha depois de já ter tentado arquivo original, print único
-    // e (se preciso) rolagem-e-costura com nova tentativa — nesse ponto a
-    // questão já foi mandada só com texto, e o card avisa isso em vez de
-    // fingir que não tinha figura nenhuma.
-    if (imagemFalhou) {
-      card.append(el("div", "aviso", "Não consegui enviar a figura desta questão — respondida só com o texto."));
-    }
-    // reasoning vem preenchido sempre que a resposta veio do estágio
-    // escalado (source: "claude"), não só quando `explain` foi pedido —
-    // por isso continua renderizado aqui.
-    if (d.reasoning) {
-      card.append(el("div", "motivo", d.reasoning));
-    }
-    // multipla usa answerProbs (probabilidade de TODAS as alternativas,
-    // marcadas ou não); unica/aberta usam probabilities, como já era.
-    const probs = multipla ? d.answerProbs : d.probabilities;
-    const escolhidas = multipla ? new Set(marcadas) : new Set([d.answer]);
-    const b = barras(probs, escolhidas);
-    if (b) card.append(b);
-    card.append(dica());
-    posicionar(card, rect);
+      if (multipla) {
+        const opcoes = d.parsed && d.parsed.options;
+        if (marcadas.length) {
+          const lista = emCascata(el("div", "opcoes-multipla"));
+          for (const label of marcadas) {
+            const item = el("div", "opcao-marcada");
+            item.append(el("span", "opcao-letra", label));
+            item.append(el("span", "opcao-texto", truncar(textoDaOpcao(opcoes, label), 120)));
+            lista.append(item);
+          }
+          card.append(lista);
+        } else {
+          // Defensivo: não deveria acontecer (a API sempre marca pelo menos
+          // uma), mas as barras de probabilidade continuam úteis mesmo assim.
+          card.append(emCascata(el("div", "motivo", "Nenhuma alternativa passou do limiar.")));
+        }
+      }
+
+      if (d.degraded) {
+        card.append(emCascata(el("div", "aviso", "Confiança baixa — o segundo modelo não respondeu.")));
+      }
+      // A imagem só falha depois de já ter tentado arquivo original, print único
+      // e (se preciso) rolagem-e-costura com nova tentativa — nesse ponto a
+      // questão já foi mandada só com texto, e o card avisa isso em vez de
+      // fingir que não tinha figura nenhuma.
+      if (imagemFalhou) {
+        card.append(emCascata(el("div", "aviso", "Não consegui enviar a figura desta questão — respondida só com o texto.")));
+      }
+      // reasoning vem preenchido sempre que a resposta veio do estágio
+      // escalado (source: "claude"), não só quando `explain` foi pedido —
+      // por isso continua renderizado aqui.
+      if (d.reasoning) {
+        card.append(emCascata(el("div", "motivo", d.reasoning)));
+      }
+      // multipla usa answerProbs (probabilidade de TODAS as alternativas,
+      // marcadas ou não); unica/aberta usam probabilities, como já era.
+      const probs = multipla ? d.answerProbs : d.probabilities;
+      const escolhidas = multipla ? new Set(marcadas) : new Set([d.answer]);
+      const b = barras(probs, escolhidas);
+      if (b) {
+        // Cada linha de barra entra em cascata, uma de cada vez.
+        for (const linhaBarra of [...b.children]) emCascata(linhaBarra);
+        card.append(b);
+      }
+      card.append(dica());
+    });
   }
 
   // Rodapé discreto lembrando do atalho de pergunta livre (Alt+Q, T) — só
@@ -387,33 +513,45 @@ if (!window.__quizJevCarregado) {
   }
 
   function mostrarErro(card, mensagem, rect) {
-    limpar(card);
-    card.append(el("div", "erro", mensagem || "falhou"));
-    // T continua funcionando aqui (ctxAtual sobrevive a um erro — só some no
-    // fechar()) — a dica evita que isso fique escondido justo quando a
-    // resposta automática falhou e perguntar na mão é a saída.
-    card.append(dica());
-    posicionar(card, rect);
+    trocarConteudo(card, rect, () => {
+      card.classList.remove("carregando-ativo");
+      card.append(el("div", "erro", mensagem || "falhou"));
+      // T continua funcionando aqui (ctxAtual sobrevive a um erro — só some no
+      // fechar()) — a dica evita que isso fique escondido justo quando a
+      // resposta automática falhou e perguntar na mão é a saída.
+      card.append(dica());
+    });
     // Reflow forçado antes de reaplicar a classe: se um erro anterior já
     // tivesse deixado "erro-anim" no card, adicionar a MESMA classe de novo
     // não reinicia a animação (o navegador só reage a uma mudança real).
+    // Independente do reflow que trocarConteudo já fez pra altura — são
+    // propriedades diferentes (transform vs. height), sem conflito.
     card.classList.remove("erro-anim");
     void card.offsetWidth;
     card.classList.add("erro-anim");
   }
 
-  // Estado intermediário (captura de tela, consulta ao servidor…) — os três
-  // pontinhos pulsando (ver @keyframes quizJevPulse no CSS) são só um sinal
-  // de "ainda trabalhando", não uma barra de progresso real.
-  function mostrarCarregando(card, texto, rect) {
-    limpar(card);
-    const linha = el("div", "carregando");
-    linha.append(document.createTextNode(texto));
-    const pontos = el("span", "pontos");
-    pontos.append(el("i"), el("i"), el("i"));
-    linha.append(pontos);
-    card.append(linha);
-    posicionar(card, rect);
+  // Estado intermediário (captura de tela, consulta ao servidor…). O shimmer
+  // diagonal (ver .card.carregando-ativo::before no CSS) é só um sinal de
+  // "ainda trabalhando", não uma barra de progresso real — quando `progresso`
+  // (0..1) é passado, a barra fina abaixo do texto é quem comunica avanço de
+  // verdade (aproximado), usada nos passos da captura de imagem.
+  function mostrarCarregando(card, texto, rect, progresso) {
+    trocarConteudo(card, rect, () => {
+      card.classList.add("carregando-ativo");
+      card.append(el("div", "carregando", texto));
+      if (typeof progresso === "number") {
+        const barraWrap = el("div", "progresso");
+        const barra = document.createElement("i");
+        barraWrap.append(barra);
+        card.append(barraWrap);
+        // Mesmo truque de barras(): nasce em 0 (CSS) e só ganha a largura
+        // real num rAF seguinte, senão o navegador não chega a animar.
+        requestAnimationFrame(() => {
+          barra.style.width = `${Math.round(Math.min(1, Math.max(0, progresso)) * 100)}%`;
+        });
+      }
+    });
   }
 
   // Caixa da pergunta livre (Alt+Q, T) — troca o conteúdo do MESMO card já
@@ -423,15 +561,17 @@ if (!window.__quizJevCarregado) {
     if (!ctxAtual) return;
     ctxAtual.perguntando = true;
     const { card, rect } = ctxAtual;
-    limpar(card);
-    card.classList.add("aberta");
-    card.append(el("div", "pergunta-label", "Pergunte sobre o assunto selecionado:"));
-    const textarea = document.createElement("textarea");
-    textarea.className = "pergunta-input";
-    textarea.placeholder = "Escreva sua pergunta…";
-    card.append(textarea);
-    card.append(el("div", "pergunta-dica", "Enter envia · Shift+Enter quebra linha · Esc fecha"));
-    posicionar(card, rect);
+    let textarea;
+    trocarConteudo(card, rect, () => {
+      card.classList.remove("carregando-ativo");
+      card.classList.add("aberta");
+      card.append(el("div", "pergunta-label", "Pergunte sobre o assunto selecionado:"));
+      textarea = document.createElement("textarea");
+      textarea.className = "pergunta-input";
+      textarea.placeholder = "Escreva sua pergunta…";
+      card.append(textarea);
+      card.append(el("div", "pergunta-dica", "Enter envia · Shift+Enter quebra linha · Esc fecha"));
+    });
     textarea.focus();
     textarea.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -863,7 +1003,12 @@ if (!window.__quizJevCarregado) {
       for (let i = 0; i < faixas.length; i++) {
         if (!document.getElementById(ID)) break; // usuário fechou o card no meio da costura
 
-        mostrarCarregando(card, `Capturando a figura (${i + 1}/${faixas.length})…`, rect);
+        mostrarCarregando(
+          card,
+          `Capturando a figura (${i + 1}/${faixas.length})…`,
+          rect,
+          0.15 + 0.55 * ((i + 1) / faixas.length)
+        );
         await new Promise((resolve) => requestAnimationFrame(resolve)); // deixa o texto pintar antes de esconder
 
         if (host) host.style.visibility = "hidden";
@@ -883,6 +1028,7 @@ if (!window.__quizJevCarregado) {
     }
 
     if (!capturas.length) return null;
+    if (document.getElementById(ID)) mostrarCarregando(card, "Costurando a imagem…", rect, 0.85);
     try {
       return await montarImagemFinal(capturas, regiaoDoc);
     } catch (e) {
@@ -900,7 +1046,7 @@ if (!window.__quizJevCarregado) {
   async function resolverImagemDaSelecao(visuais, rect, card) {
     const imgsRelevantes = visuais.map(elementoImagemReal).filter(Boolean);
     if (imgsRelevantes.length === visuais.length) {
-      mostrarCarregando(card, "Lendo a imagem…", rect);
+      mostrarCarregando(card, "Lendo a imagem…", rect, 0.25);
       const resultado = await capturarImagemDeArquivo(imgsRelevantes);
       if (!document.getElementById(ID)) return null;
       if (resultado) return resultado;
@@ -909,11 +1055,11 @@ if (!window.__quizJevCarregado) {
     const uniao = uniaoComFolga([rect, ...visuais.map((elemento) => elemento.getBoundingClientRect())], FOLGA_RECORTE_PX);
 
     if (cabeNaViewport(uniao)) {
-      mostrarCarregando(card, "Capturando a tela…", rect);
+      mostrarCarregando(card, "Capturando a tela…", rect, 0.35);
       const printResp = await capturarComRetentativa();
       if (!document.getElementById(ID)) return null;
       if (!printResp?.ok) return null;
-      mostrarCarregando(card, "Recortando a imagem…", rect);
+      mostrarCarregando(card, "Recortando a imagem…", rect, 0.75);
       try {
         const base64 = await recortarImagem(printResp.dataUrl, uniao);
         return { base64, mime: "image/png" };
@@ -1018,7 +1164,12 @@ if (!window.__quizJevCarregado) {
       }
     }
 
-    mostrarCarregando(card, ctx.imageBase64 ? "Analisando a imagem…" : "Consultando…", rect);
+    mostrarCarregando(
+      card,
+      ctx.imageBase64 ? "Analisando a imagem…" : "Consultando…",
+      rect,
+      ctx.imageBase64 ? 0.95 : undefined
+    );
     const resp = await api.runtime.sendMessage({ type: "ask", raw, imageBase64: ctx.imageBase64, imageMime: ctx.imageMime });
     if (!document.getElementById(ID)) return; // usuário fechou enquanto carregava
     if (resp?.ok) mostrarResposta(card, resp.data, rect, !!ctx.imageBase64, imagemFalhou);
