@@ -4,7 +4,9 @@ Selecione uma questão de múltipla escolha na tela, aperte `Alt+Q`, e a respost
 aparece num pequeno card logo abaixo da seleção. Com o card aberto, aperte `T`
 pra trocar pra uma pergunta livre sobre o mesmo trecho — útil quando você não
 quer a alternativa, quer entender o assunto ("por que a B está certa?", "explica
-isso de outro jeito").
+isso de outro jeito"). Se já sabe que quer perguntar em vez de responder,
+`Alt+Shift+Q` abre a caixa de pergunta direto, sem consultar a resposta
+automática primeiro.
 
 Funciona em **Firefox / Zen** e **Chrome**.
 
@@ -36,7 +38,7 @@ alternativas — para você julgar se vale confiar.
 No caso da figura, o recorte só é enviado quando a seleção realmente encosta em
 algo visual — senão toda questão pagaria o custo do modelo com visão.
 
-### Pergunta livre (`Alt+Q`, depois `T`)
+### Pergunta livre (`Alt+Q`, depois `T`, ou direto com `Alt+Shift+Q`)
 
 Com o card de resposta aberto (ou ainda carregando), aperte `T` pra trocar o
 conteúdo do card por uma caixa de texto. Escreva a pergunta e aperte `Enter`
@@ -45,6 +47,32 @@ contexto e a sua pergunta, e a resposta volta sem o limite de "1 a 3 frases"
 do modo de questão: pode escrever o quanto for necessário pra explicar bem.
 Depois de responder, `T` funciona de novo, pra encadear outra pergunta sobre
 o mesmo trecho. `Esc` fecha tudo, como em qualquer outro estado do card.
+
+Se você já sabe que quer perguntar (não quer a resposta da questão), selecione
+o trecho e aperte `Alt+Shift+Q` — abre a caixa de pergunta direto, sem gastar
+tempo consultando a resposta automática primeiro. Sem nada selecionado, o
+atalho mostra um aviso em vez de fazer qualquer chamada.
+
+### Atalhos de teclado
+
+| atalho | ação |
+|---|---|
+| `Alt+Q` | responde a questão selecionada |
+| `Alt+Shift+Q` | pergunta livre direta sobre a seleção |
+| `T` (com o card aberto) | pergunta livre sobre a mesma seleção (follow-up) |
+
+Os dois atalhos de navegador (`Alt+Q` e `Alt+Shift+Q`) podem ser trocados a
+qualquer momento:
+
+- **Chrome:** `chrome://extensions/shortcuts`
+- **Firefox / Zen:** `about:addons` → engrenagem (⚙) → **Gerenciar atalhos de
+  extensões**
+
+> **Chrome:** um `suggested_key` novo (como o `Alt+Shift+Q` deste release) só é
+> aplicado automaticamente numa instalação **nova** da extensão — numa que já
+> estava instalada, o Chrome não atribui o atalho sozinho. Depois de
+> atualizar, confira/atribua `Alt+Shift+Q` manualmente em
+> `chrome://extensions/shortcuts`.
 
 ## Instalação
 
@@ -94,15 +122,20 @@ você apertar `Alt+Q`, a extensão não lê página nenhuma.
 ## Privacidade
 
 O texto que você seleciona é enviado ao servidor para ser respondido, e o
-enunciado **não** é gravado em log. Quando a seleção inclui uma figura, o
-recorte da tela também é enviado. A sessão fica no armazenamento local do seu
-navegador.
+enunciado **não** é gravado em log. Quando a seleção inclui uma figura, a
+imagem (o arquivo original ou um recorte/costura da tela, dependendo do caso)
+também é enviada. A sessão fica no armazenamento local do seu navegador.
 
 ## Limitações conhecidas
 
-- A captura de imagem fotografa apenas o que está **visível** na tela. Se parte
-  da questão estiver rolada para fora, a extensão avisa em vez de mandar um
-  recorte cortado.
+- Quando a figura é um `<img>`/`<picture>`, a extensão lê o arquivo original
+  (qualidade cheia, não depende de caber na tela). Pra canvas, SVG, tabela ou
+  vídeo, ela fotografa a tela — um print só se a figura cabe na viewport, ou
+  rolando e costurando várias capturas quando não cabe. Um cabeçalho fixo ou
+  sticky pode aparecer repetido nas faixas da costura.
+- Se, mesmo assim, não for possível obter a figura (falha de rede, captura
+  bloqueada…), a questão é enviada só com o texto, e o card mostra um aviso
+  discreto disso.
 - Em questões de completar lacunas, a resposta pode usar um sinônimo do termo
   esperado.
 - O modelo rápido erra, e é por isso que o card mostra a confiança dele. Trate

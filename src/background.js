@@ -100,12 +100,15 @@ async function login(identifier, password) {
 }
 
 api.commands.onCommand.addListener(async (command) => {
-  if (command !== "answer-selection") return;
+  if (command !== "answer-selection" && command !== "ask-selection") return;
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   try {
     await api.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/content.js"] });
-    await api.tabs.sendMessage(tab.id, { type: "start" });
+    // ask-selection (Alt+Shift+Q): abre direto a caixa de pergunta livre, sem
+    // consultar a resposta automática antes — ver content.js/processarPerguntaDireta.
+    const msg = command === "ask-selection" ? { type: "start", modo: "perguntar" } : { type: "start" };
+    await api.tabs.sendMessage(tab.id, msg);
   } catch (e) {
     console.error("quiz-jev: não consegui injetar na aba", e);
   }

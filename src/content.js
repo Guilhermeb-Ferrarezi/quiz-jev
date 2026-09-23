@@ -933,9 +933,53 @@ if (!window.__quizJevCarregado) {
   // de retorno (uma Promise) de uma função listener async.
   api.runtime.onMessage.addListener((msg) => {
     if (msg?.type !== "start") return false;
-    processarSelecao();
+    // modo "perguntar" (Alt+Shift+Q, ver background.js): abre direto a caixa
+    // de pergunta livre, sem consultar a resposta automática primeiro.
+    if (msg.modo === "perguntar") processarPerguntaDireta();
+    else processarSelecao();
     return false;
   });
+
+  // Alt+Shift+Q: pergunta livre direta, sem passar pela consulta automática.
+  // É um atalho de navegador de verdade (api.commands), não uma tecla dentro
+  // do card — por isso não tem a corrida que "Alt+Q, depois T rápido" tinha
+  // (o T dentro do card só existe DEPOIS que abrir() registra aoTeclar, e um
+  // T digitado antes disso se perdia). Sem seleção não há contexto pra
+  // perguntar: avisa e não chama a API.
+  async function processarPerguntaDireta() {
+    const sel = window.getSelection();
+    const raw = sel ? sel.toString().trim() : "";
+    if (!raw) {
+      const rect = { top: 16, bottom: 16, left: 16, right: 16 };
+      const card = abrir(rect);
+      card.append(el("div", "erro", "Selecione um trecho antes de perguntar."));
+      posicionar(card, rect);
+      return;
+    }
+
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const card = abrir(rect);
+    const ctx = { raw, rect, card, imageBase64: null, imageMime: null, perguntando: false };
+    ctxAtual = ctx;
+
+    const visuais = encontrarElementosVisuais(range);
+    if (visuais.length) {
+      const resultado = await resolverImagemDaSelecao(visuais, rect, card);
+      if (!document.getElementById(ID) || ctxAtual !== ctx) return; // fechou ou uma seleção nova assumiu
+      if (resultado) {
+        ctx.imageBase64 = resultado.base64;
+        ctx.imageMime = resultado.mime;
+      }
+      // Falha de imagem aqui não tem aviso próprio: abrirPerguntar substitui
+      // o conteúdo do card pela caixa de texto a seguir, e enviarPergunta já
+      // manda só o texto quando imageBase64 continua null — comportamento
+      // correto sem precisar de um aviso que sumiria no mesmo instante.
+    }
+
+    if (!document.getElementById(ID) || ctxAtual !== ctx) return;
+    abrirPerguntar();
+  }
 
   async function processarSelecao() {
     const sel = window.getSelection();

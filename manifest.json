@@ -23,6 +23,10 @@
     "answer-selection": {
       "suggested_key": { "default": "Alt+Q" },
       "description": "Responder a questão selecionada"
+    },
+    "ask-selection": {
+      "suggested_key": { "default": "Alt+Shift+Q" },
+      "description": "Perguntar livremente sobre a seleção"
     }
   }
 }
