@@ -1,4 +1,4 @@
-# Quiz Jev — extensão de navegador
+# Quiz Jev
 
 Selecione uma questão de múltipla escolha na tela, aperte `Alt+Q`, e a resposta
 aparece num pequeno card logo abaixo da seleção. Com o card aberto, aperte `T`
@@ -7,6 +7,54 @@ quer a alternativa, quer entender o assunto ("por que a B está certa?", "explic
 isso de outro jeito"). Se já sabe que quer perguntar em vez de responder,
 `Alt+Shift+Q` abre a caixa de pergunta direto, sem consultar a resposta
 automática primeiro.
+
+Existem duas formas de usar, com o mesmo backend:
+
+- **[Bookmarklet](#bookmarklet)** — um favorito de navegador, funciona em
+  qualquer site (até com CSP restritiva), sem instalar nada.
+- **[Extensão de navegador](#extensão-de-navegador)** — atalho global mesmo
+  fora da aba ativa, Firefox/Zen e Chrome.
+
+## Bookmarklet
+
+Não requer instalação: um favorito que roda a mesma lógica de seleção +
+resposta direto na página da prova, mesmo em sites com CSP restritiva
+(`connect-src`/`style-src` bloqueando chamada externa) — nesse caso ele
+oferece um botão para abrir a resposta numa janelinha separada em vez de
+travar sem feedback.
+
+**Instalação:** **https://guilhermeb-ferrarezi.github.io/quiz-jev/** — cole sua
+chave `qz_...`, arraste o link gerado para a barra de favoritos (ou copie o
+código pra criar o favorito à mão / no celular). A chave fica embutida só no
+seu favorito, gerada localmente no navegador — nunca trafega em requisição
+nenhuma nem fica em arquivo deste repositório.
+
+Uso: selecione o enunciado + alternativas na página da prova e clique no
+favorito. Enquanto a página não recarrega, `Alt+Q` repete o processo numa
+seleção nova sem precisar clicar de novo, e `Alt+Shift+Q` abre direto a
+pergunta livre.
+
+Diferenças em relação à extensão (limitações inerentes a não ter APIs de
+extensão disponíveis):
+
+- Sem `tabs.captureVisibleTab`, não há como fotografar a tela — a captura de
+  imagem funciona para `<img>`/`<picture>` (arquivo original ou, se
+  bloqueado, o endereço da imagem) e para um `<canvas>` que já exista na
+  página; tabela, SVG, vídeo ou `background-image` não são capturados.
+  Também usa só a primeira imagem da seleção (a extensão empilha várias e
+  faz rolagem-e-costura).
+- A transição animada de altura entre estados do card (da extensão) foi
+  simplificada para uma troca direta — as animações visuais (entrada, "pop"
+  da letra, barras, "Consultando" com bolinhas) continuam as mesmas.
+
+O código-fonte do bookmarklet vive em `bookmarklet/` (`render-shared.js` é o
+visual do card, reaproveitado por `docs/relay.html`; `quiz-jev.js` é a lógica
+de seleção/captura/chamada). `bookmarklet/build.js` (sem dependências) gera
+`docs/bookmarklet.min.js` e `docs/quiz-render.js`, publicados pelo GitHub
+Pages a partir de `docs/` — rode `node bookmarklet/build.js` depois de mexer
+nas fontes.
+
+## Extensão de navegador
 
 Funciona em **Firefox / Zen** e **Chrome**.
 

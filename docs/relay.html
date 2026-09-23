@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quiz Jev</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { background: #18181b; } }
+  #aviso-inicial {
+    font: 13px/1.5 system-ui, sans-serif; color: #52525b; padding: 14px;
+  }
+  @media (prefers-color-scheme: dark) { #aviso-inicial { color: #a1a1aa; } }
+</style>
+</head>
+<body>
+<!-- O card em si é montado por quiz-render.js (mesmo visual do bookmarklet e
+     da extensão: badges, barras, "Consultando" com bolinhas). Esta página
+     não usa Shadow DOM — é a NOSSA página (GitHub Pages, sem CSP
+     restritiva), então o CSS pode ir direto num <style> normal. -->
+<div id="aviso-inicial">Abrindo…</div>
+<div class="card" id="card" style="display:none"></div>
+
+<script src="quiz-render.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var API = "https://api.santos-tech.com/quiz/answer";
+  var card = document.getElementById("card");
+  var avisoInicial = document.getElementById("aviso-inicial");
+
+  // CSS compartilhado (mesmo do bookmarklet/extensão) + ajustes só desta
+  // página: aqui o card é o conteúdo INTEIRO da janela (pequena, aberta via
+  // window.open), não um overlay flutuante sobre uma página de terceiros.
+  var style = document.createElement("style");
+  style.textContent =
+    QUIZ_JEV_CSS +
+    "\n.card { position: static !important; max-width: 100% !important; " +
+    "width: 100%; min-height: 100vh; box-sizing: border-box; margin: 0; " +
+    "border: none; border-radius: 0; box-shadow: none; animation: none !important; }";
+  document.head.appendChild(style);
+
+  function mostrarCard() {
+    avisoInicial.style.display = "none";
+    card.style.display = "";
+  }
+
+  mostrarCard();
+  quizJevMontarCarregando(card, "Consultando");
+
+  var processado = false;
+
+  // Formato esperado, mandado pelo bookmarklet via postMessage:
+  // { raw: string, key: string, ask?: string, imageBase64?: string,
+  //   imageMime?: string, imageUrl?: string }
+  function formatoValido(d) {
+    if (!d || typeof d !== "object") return false;
+    if (typeof d.raw !== "string" || !d.raw) return false;
+    if (typeof d.key !== "string" || !d.key) return false;
+    if (d.ask !== undefined && typeof d.ask !== "string") return false;
+    if (d.imageBase64 !== undefined && typeof d.imageBase64 !== "string") return false;
+    if (d.imageUrl !== undefined && typeof d.imageUrl !== "string") return false;
+    return true;
+  }
+
+  function processarMensagem(d) {
+    var payload = { raw: d.raw };
+    if (d.ask) payload.ask = d.ask;
+    if (d.imageBase64) {
+      payload.imageBase64 = d.imageBase64;
+      payload.imageMime = d.imageMime || "image/png";
+    } else if (d.imageUrl) {
+      payload.imageUrl = d.imageUrl;
+    }
+    var comImagem = !!(d.imageBase64 || d.imageUrl);
+
+    fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Quiz-Key": d.key },
+      body: JSON.stringify(payload),
+    })
+      .then(function (res) {
+        return res
+          .json()
+          .catch(function () {
+            return {};
+          })
+          .then(function (data) {
+            if (!res.ok) throw new Error((data && data.message) || "erro " + res.status);
+            return data;
+          });
+      })
+      .then(function (data) {
+        quizJevLimpar(card);
+        quizJevMontarResposta(card, data, comImagem, false);
+      })
+      .catch(function (e) {
+        quizJevLimpar(card);
+        quizJevMontarErro(card, e && e.message);
+      });
+  }
+
+  window.addEventListener("message", function (ev) {
+    // window.opener é quem abriu esta janela (o bookmarklet, rodando no
+    // domínio variável do site da prova) — aceitamos qualquer origin (a
+    // prova pode ser em qualquer domínio), mas só processamos mensagens do
+    // opener e só se tiverem exatamente o formato esperado.
+    if (ev.source !== window.opener) return;
+    if (processado) return;
+    if (!formatoValido(ev.data)) return;
+    processado = true;
+    processarMensagem(ev.data);
+  });
+
+  // Handshake: avisa o opener que já está pronta pra receber — evita perder
+  // a mensagem se o bookmarklet mandasse antes desta página carregar.
+  if (window.opener) {
+    window.opener.postMessage({ type: "quizjev-pronto" }, "*");
+  } else {
+    quizJevLimpar(card);
+    quizJevMontarErro(card, "Esta janela foi aberta sem uma página de origem — abra pelo favorito Quiz Jev de novo.");
+  }
+
+  // Se nada chegar em 20s (aba de origem fechada, favorito antigo etc.),
+  // avisa em vez de deixar "Consultando" girando pra sempre.
+  setTimeout(function () {
+    if (processado) return;
+    quizJevLimpar(card);
+    quizJevMontarErro(card, "Nada chegou da página de origem. Feche esta janela e clique no favorito de novo.");
+  }, 20000);
+})();
+</script>
+</body>
+</html>

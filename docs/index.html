@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quiz Jev — instalar o bookmarklet</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #111; --muted: #52525b; --card: #fff; --border: #d4d4d8;
+    --accent: #2563eb; --accent-bg: #eff6ff; --accent-border: #93c5fd;
+    --code-bg: #f4f4f5; --ok: #166534; --ok-bg: #dcfce7; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --card: #27272a; --border: #3f3f46;
+      --accent: #60a5fa; --accent-bg: #1e3a5f; --accent-border: #2563eb;
+      --code-bg: #1f1f23; --ok: #bbf7d0; --ok-bg: #14532d; --err: #fca5a5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 system-ui, sans-serif; padding: 32px 16px 64px;
+  }
+  main { max-width: 620px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type="text"] {
+    width: 100%; font: inherit; padding: 9px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .linha-botao { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; font-size: 13px; padding: 8px 16px;
+    border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-bg);
+    color: var(--accent); cursor: pointer;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .5; cursor: default; }
+  .erro-campo { color: var(--err); font-size: 12px; margin-top: 8px; display: none; }
+  .erro-campo.visivel { display: block; }
+  .resultado { display: none; }
+  .resultado.visivel { display: block; }
+  .link-bookmarklet {
+    display: inline-block; margin-top: 4px; padding: 10px 18px; border-radius: 8px;
+    background: var(--accent); color: #fff; font-weight: 700; text-decoration: none;
+    font-size: 14px; cursor: grab;
+  }
+  .aviso-arrastar { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  textarea.codigo {
+    width: 100%; margin-top: 10px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--code-bg); color: var(--fg); resize: vertical; height: 90px;
+  }
+  .copiado { font-size: 12px; color: var(--ok); margin-left: 8px; display: none; }
+  .copiado.visivel { display: inline; }
+  .selo-local {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--ok); background: var(--ok-bg); padding: 4px 10px; border-radius: 999px;
+    margin-bottom: 20px;
+  }
+  ol, ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  kbd {
+    font: 12px ui-monospace, monospace; padding: 1px 6px; border-radius: 4px;
+    background: var(--code-bg); border: 1px solid var(--border);
+  }
+  footer { margin-top: 32px; font-size: 12px; color: var(--muted); }
+  footer a { color: var(--accent); }
+  code.inline { font: 12px ui-monospace, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quiz Jev — instalar o bookmarklet</h1>
+  <p class="sub">Responde a questão de múltipla escolha selecionada, em qualquer site — sem instalar extensão.</p>
+
+  <span class="selo-local">🔒 a chave nunca sai do seu navegador — geração 100% local, sem nenhuma requisição de rede</span>
+
+  <div class="card">
+    <h2>1. Cole sua chave</h2>
+    <label for="campo-chave">Chave de acesso (começa com <code class="inline">qz_</code>)</label>
+    <input type="text" id="campo-chave" placeholder="qz_..." autocomplete="off" spellcheck="false" />
+    <div class="linha-botao">
+      <button id="botao-gerar" type="button">Gerar bookmarklet</button>
+      <span id="erro-campo" class="erro-campo">Isso não parece uma chave <code class="inline">qz_...</code> válida.</span>
+    </div>
+  </div>
+
+  <div class="card resultado" id="bloco-resultado">
+    <h2>2. Arraste para a barra de favoritos</h2>
+    <p class="aviso-arrastar">Arraste o botão azul abaixo para a barra de favoritos do navegador (se ela estiver escondida, <kbd>Ctrl+Shift+B</kbd> no Chrome ou <kbd>Ctrl+Shift+B</kbd> no Firefox mostra/esconde).</p>
+    <a id="link-bookmarklet" class="link-bookmarklet" href="javascript:void(0)">Quiz Jev</a>
+
+    <p class="aviso-arrastar">Prefere criar o favorito à mão (ou está no celular)? Copie o código abaixo e cole como o <em>endereço</em> de um novo favorito:</p>
+    <textarea class="codigo" id="codigo-bookmarklet" readonly spellcheck="false"></textarea>
+    <div class="linha-botao">
+      <button id="botao-copiar" type="button">Copiar código</button>
+      <span id="copiado" class="copiado">copiado ✓</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. Como usar</h2>
+    <ol>
+      <li>Na página da prova, selecione o enunciado e as alternativas (arraste o mouse por cima do texto).</li>
+      <li>Clique no favorito <strong>Quiz Jev</strong> na barra de favoritos.</li>
+      <li>Um cartão aparece com a resposta. Se o site bloquear a chamada direta, um botão “Abrir resposta em janela” cuida do resto.</li>
+      <li>Enquanto não recarregar a página, <kbd>Alt+Q</kbd> repete o processo numa seleção nova sem precisar clicar no favorito de novo, e <kbd>Alt+Shift+Q</kbd> abre direto uma pergunta livre.</li>
+    </ol>
+  </div>
+
+  <footer>
+    Código-fonte: <a href="https://github.com/guilhermeb-ferrarezi/quiz-jev">github.com/guilhermeb-ferrarezi/quiz-jev</a>.
+    Existe também uma <a href="https://github.com/guilhermeb-ferrarezi/quiz-jev#extensão-de-navegador">extensão de navegador</a> com o mesmo backend, pra quem prefere um atalho global em vez do favorito.
+  </footer>
+</main>
+
+<script src="bookmarklet.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  // Tudo aqui roda só no navegador de quem está instalando — nenhuma parte
+  // deste script faz fetch/XHR. window.QUIZ_JEV_BOOKMARKLET_TEMPLATE já
+  // chegou pronto com o <script src="bookmarklet.min.js"> acima (um arquivo
+  // estático do próprio site, gerado em build por bookmarklet/build.js a
+  // partir de bookmarklet/render-shared.js + bookmarklet/quiz-jev.js).
+  var RE_CHAVE = /^qz_[A-Za-z0-9_-]{10,}$/;
+
+  var campoChave = document.getElementById("campo-chave");
+  var botaoGerar = document.getElementById("botao-gerar");
+  var erroCampo = document.getElementById("erro-campo");
+  var blocoResultado = document.getElementById("bloco-resultado");
+  var linkBookmarklet = document.getElementById("link-bookmarklet");
+  var codigoBookmarklet = document.getElementById("codigo-bookmarklet");
+  var botaoCopiar = document.getElementById("botao-copiar");
+  var copiado = document.getElementById("copiado");
+
+  function gerar() {
+    var chave = campoChave.value.trim();
+    if (!RE_CHAVE.test(chave)) {
+      erroCampo.classList.add("visivel");
+      blocoResultado.classList.remove("visivel");
+      return;
+    }
+    erroCampo.classList.remove("visivel");
+
+    var template = window.QUIZ_JEV_BOOKMARKLET_TEMPLATE;
+    if (!template || template.indexOf("__QUIZ_KEY__") === -1) {
+      erroCampo.textContent = "Não consegui carregar o código do bookmarklet (bookmarklet.min.js). Recarregue a página.";
+      erroCampo.classList.add("visivel");
+      return;
+    }
+    // Substituição simples de texto: __QUIZ_KEY__ já está DENTRO de aspas no
+    // template (var QUIZ_KEY = "__QUIZ_KEY__";), e RE_CHAVE só aceita
+    // letras/números/_/- — não há aspas nem barra invertida na chave pra
+    // escapar.
+    var codigo = template.split("__QUIZ_KEY__").join(chave);
+    var url = "javascript:" + encodeURIComponent(codigo);
+
+    linkBookmarklet.setAttribute("href", url);
+    codigoBookmarklet.value = url;
+    blocoResultado.classList.add("visivel");
+    copiado.classList.remove("visivel");
+  }
+
+  botaoGerar.addEventListener("click", gerar);
+  campoChave.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") gerar();
+  });
+
+  botaoCopiar.addEventListener("click", function () {
+    codigoBookmarklet.select();
+    var ok = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(codigoBookmarklet.value).then(function () {
+        copiado.classList.add("visivel");
+      }).catch(function () {
+        try { ok = document.execCommand("copy"); } catch (e) {}
+        if (ok) copiado.classList.add("visivel");
+      });
+    } else {
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      if (ok) copiado.classList.add("visivel");
+    }
+  });
+})();
+</script>
+</body>
+</html>
