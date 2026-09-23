@@ -45,6 +45,10 @@ if (!window.__quizJevCarregado) {
     @keyframes quizJevItemIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
     /* Brilho diagonal em loop, só durante o carregamento (ver .carregando-ativo). */
     @keyframes quizJevShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+    /* Bolinhas do "Consultando": cada uma sobe e desce, em sequência (delays
+       em .pontos i:nth-child). A borda azul pulsa enquanto o card espera. */
+    @keyframes quizJevBolinha { 0%, 60%, 100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-5px); opacity: 1; } }
+    @keyframes quizJevBorda { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
     .card {
       position: fixed; z-index: 2147483647; max-width: 340px;
       max-height: min(60vh, 420px); overflow-y: auto;
@@ -114,7 +118,19 @@ if (!window.__quizJevCarregado) {
     .barra.escolhida i { background: #2563eb; }
     .erro { color: #b91c1c; }
     /* position/z-index: fica por cima do ::before do shimmer (ver .card.carregando-ativo). */
-    .carregando { position: relative; z-index: 1; display: flex; align-items: center; color: #52525b; font-size: 13px; }
+    .carregando { position: relative; z-index: 1; display: flex; align-items: center; color: #2563eb; font-size: 13px; font-weight: 500; }
+    .pontos { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 5px; height: 1em; padding-bottom: 2px; }
+    .pontos i { display: block; width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+                animation: quizJevBolinha 900ms ease-in-out infinite; }
+    .pontos i:nth-child(2) { animation-delay: .15s; }
+    .pontos i:nth-child(3) { animation-delay: .3s; }
+    /* Borda azul pulsando enquanto consulta — é o sinal mais visível do card
+       "trabalhando" e, ao contrário do shimmer, aparece bem no tema escuro. */
+    .card.carregando-ativo::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+      box-shadow: inset 0 0 0 1.5px rgba(37,99,235,.9), 0 0 14px rgba(37,99,235,.35);
+      animation: quizJevBorda 1.4s ease-in-out infinite;
+    }
     /* Barra fina de progresso "aproximado" — só aparece quando mostrarCarregando
        recebe um progresso (0..1), usada na captura de imagem (lendo arquivo,
        print, recortando/costurando, analisando). Não precisa ser exata. */
@@ -139,7 +155,8 @@ if (!window.__quizJevCarregado) {
       .badge { background: #3f3f46; color: #e4e4e7; }
       .badge.claude { background: #4c1d95; color: #ddd6fe; }
       .badge.imagem { background: #14532d; color: #bbf7d0; }
-      .carregando { color: #a1a1aa; }
+      .carregando { color: #60a5fa; }
+      .card.carregando-ativo::after { box-shadow: inset 0 0 0 1.5px rgba(96,165,250,.9), 0 0 16px rgba(96,165,250,.35); }
       .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); }
       .progresso { background: #3f3f46; }
       .dica { border-color: #3f3f46; }
@@ -155,6 +172,7 @@ if (!window.__quizJevCarregado) {
     @media (prefers-reduced-motion: reduce) {
       .card, .card.fechando, .card.erro-anim, .letra-pop, .letra-item, .item-cascata { animation: none !important; }
       .card.carregando-ativo::before { animation: none !important; opacity: 0; }
+      .pontos i, .card.carregando-ativo::after { animation: none !important; }
       .barra i, .progresso i, .card { transition: none !important; }
     }
   `;
@@ -539,7 +557,13 @@ if (!window.__quizJevCarregado) {
   function mostrarCarregando(card, texto, rect, progresso) {
     trocarConteudo(card, rect, () => {
       card.classList.add("carregando-ativo");
-      card.append(el("div", "carregando", texto));
+      // As reticências do texto ("Consultando…") viram três bolinhas que se
+      // mexem — tira o "…"/"..." do fim pra não aparecer os dois juntos.
+      const linha = el("div", "carregando", texto.replace(/(\u2026|\.{3})\s*$/, ""));
+      const pontos = el("span", "pontos");
+      for (let i = 0; i < 3; i++) pontos.append(document.createElement("i"));
+      linha.append(pontos);
+      card.append(linha);
       if (typeof progresso === "number") {
         const barraWrap = el("div", "progresso");
         const barra = document.createElement("i");
