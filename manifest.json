@@ -4,7 +4,13 @@
   "version": "0.1.0",
   "description": "Responde a questão de múltipla escolha selecionada na página.",
   "browser_specific_settings": {
-    "gecko": { "id": "quiz-jev@santos-tech.com", "strict_min_version": "128.0" }
+    "gecko": {
+      "id": "quiz-jev@santos-tech.com",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["authenticationInfo", "websiteContent"]
+      }
+    }
   },
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": ["https://api.santos-tech.com/*"],
