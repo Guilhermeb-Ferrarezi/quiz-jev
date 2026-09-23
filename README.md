@@ -1,7 +1,10 @@
 # Quiz Jev — extensão de navegador
 
 Selecione uma questão de múltipla escolha na tela, aperte `Alt+Q`, e a resposta
-aparece num pequeno card logo abaixo da seleção.
+aparece num pequeno card logo abaixo da seleção. Com o card aberto, aperte `T`
+pra trocar pra uma pergunta livre sobre o mesmo trecho — útil quando você não
+quer a alternativa, quer entender o assunto ("por que a B está certa?", "explica
+isso de outro jeito").
 
 Funciona em **Firefox / Zen** e **Chrome**.
 
@@ -32,6 +35,16 @@ alternativas — para você julgar se vale confiar.
 
 No caso da figura, o recorte só é enviado quando a seleção realmente encosta em
 algo visual — senão toda questão pagaria o custo do modelo com visão.
+
+### Pergunta livre (`Alt+Q`, depois `T`)
+
+Com o card de resposta aberto (ou ainda carregando), aperte `T` pra trocar o
+conteúdo do card por uma caixa de texto. Escreva a pergunta e aperte `Enter`
+(`Shift+Enter` quebra linha) — a extensão manda o trecho selecionado como
+contexto e a sua pergunta, e a resposta volta sem o limite de "1 a 3 frases"
+do modo de questão: pode escrever o quanto for necessário pra explicar bem.
+Depois de responder, `T` funciona de novo, pra encadear outra pergunta sobre
+o mesmo trecho. `Esc` fecha tudo, como em qualquer outro estado do card.
 
 ## Instalação
 

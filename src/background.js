@@ -117,6 +117,11 @@ api.commands.onCommand.addListener(async (command) => {
 api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "ask") {
     const body = { raw: msg.raw, explain: !!msg.explain };
+    // ask: presente só no atalho de pergunta livre (Alt+Q, T — ver
+    // content.js/abrirPerguntar). Nesse caso `raw` vira contexto, não
+    // enunciado — é o /quiz/answer do api-go que decide isso (campo
+    // `ask` no corpo, ver quiz.go).
+    if (msg.ask) body.ask = msg.ask;
     // imageBase64/imageMime só vêm quando o content script detectou conteúdo
     // visual na seleção (gráfico, tabela, figura) — ver content.js. Sem
     // imagem, o corpo é idêntico ao de antes e o fluxo rápido continua igual.
