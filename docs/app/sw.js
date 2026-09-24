@@ -16,7 +16,7 @@
 // precisam ficar em sincronia manual entre os dois arquivos, não há import
 // nenhum ligando eles.
 
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const APP_SHELL_CACHE = "quizjev-app-shell-" + CACHE_VERSION;
 
 // Cache separado e SEM versão no nome — não pode ser limpo no activate() de
@@ -43,7 +43,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(APP_SHELL_CACHE)
-      .then((cache) => cache.addAll(APP_SHELL_URLS))
+      // cache: "reload" pula o cache HTTP do navegador: o GitHub Pages manda
+      // max-age=600, e sem isso a versão nova do SW gravava os arquivos velhos.
+      .then((cache) => cache.addAll(APP_SHELL_URLS.map((u) => new Request(u, { cache: "reload" }))))
       // Não espera todas as abas fecharem pra assumir a versão nova.
       .then(() => self.skipWaiting())
   );
@@ -93,7 +95,8 @@ self.addEventListener("fetch", (event) => {
       // pré-cacheado, só com query string a mais; sem isso o cache erraria
       // e cairia pra rede à toa nessa navegação específica.
       caches.match(req, { ignoreSearch: true }).then((cached) => {
-        const rede = fetch(req)
+        // "no-cache": revalida no servidor em vez de reaproveitar o cache HTTP.
+        const rede = fetch(req, { cache: "no-cache" })
           .then((res) => {
             // Só regrava o cache pra requisições SEM query string — a
             // navegação "?compartilhado=1" tem o mesmo pathname do shell,
