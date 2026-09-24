@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Quiz Jev</title>
+<meta name="description" content="Cole a questão ou mande um print pela tela de Compartilhar — o Quiz Jev responde." />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#2563eb" />
+<meta name="color-scheme" content="light dark" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Quiz Jev" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" href="icon-192.png" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #111; --muted: #52525b; --card: #fff; --border: #d4d4d8;
+    --accent: #2563eb; --accent-bg: #eff6ff; --accent-fg: #1d4ed8; --accent-border: #93c5fd;
+    --danger: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --card: #27272a; --border: #3f3f46;
+      --accent: #60a5fa; --accent-bg: #1e3a5f; --accent-fg: #93c5fd; --accent-border: #2563eb;
+      --danger: #fca5a5;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, sans-serif;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 17px; margin: 0; }
+  header .acoes { display: flex; align-items: center; gap: 8px; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px 48px; }
+
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border-radius: 10px; border: 1px solid var(--accent-border); background: var(--accent-bg); color: var(--accent-fg);
+  }
+  button:disabled { opacity: .55; cursor: default; }
+
+  .botao-texto {
+    border: none; background: none; color: var(--muted); font-size: 13px; font-weight: 500; padding: 8px; min-height: 36px;
+  }
+  .botao-instalar { font-size: 13px; padding: 8px 12px; min-height: 36px; }
+
+  .cartao {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .cartao h2 { font-size: 15px; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type="text"] {
+    width: 100%; font: inherit; font-size: 16px; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg); min-height: 48px;
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .erro-campo { color: var(--danger); font-size: 13px; margin-top: 10px; }
+
+  .selo-local {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--muted); margin-top: 14px;
+  }
+
+  #instrucao-ios {
+    font-size: 13px; color: var(--muted); background: var(--accent-bg); border-radius: 10px;
+    padding: 10px 12px; margin: 0 0 14px;
+  }
+
+  #campo-texto {
+    width: 100%; font: inherit; font-size: 16px; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+    resize: vertical; min-height: 110px;
+  }
+  #campo-texto:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .linha-imagem { margin-top: 14px; }
+  .botao-foto {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; min-height: 48px; font-size: 14px; padding: 10px 14px;
+  }
+  input[type="file"] { display: none; }
+
+  #preview-imagem { position: relative; margin-top: 12px; }
+  #preview-img {
+    display: block; width: 100%; max-height: 260px; object-fit: contain;
+    border-radius: 10px; border: 1px solid var(--border); background: #000;
+  }
+  #botao-remover-imagem {
+    position: absolute; top: 8px; right: 8px; min-width: 32px; min-height: 32px;
+    border-radius: 999px; padding: 0; font-size: 16px; line-height: 1; background: var(--card);
+  }
+
+  #aviso-vazio { color: var(--danger); font-size: 13px; margin-top: 10px; }
+
+  .botao-enviar {
+    width: 100%; min-height: 52px; font-size: 16px; margin-top: 16px;
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+
+  #card { margin-top: 18px; }
+
+  footer { text-align: center; font-size: 12px; color: var(--muted); margin-top: 24px; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Quiz Jev</h1>
+  <div class="acoes">
+    <button type="button" id="botao-instalar" class="botao-instalar" hidden>Instalar</button>
+    <button type="button" id="botao-trocar-chave" class="botao-texto">Trocar chave</button>
+  </div>
+</header>
+
+<main>
+  <!-- Tela 1: pedir a chave de acesso (primeira vez, ou depois de "trocar chave"). -->
+  <section id="tela-chave" hidden>
+    <div class="cartao">
+      <h2>Cole sua chave de acesso</h2>
+      <label for="campo-chave">Chave (começa com <code>qz_</code>)</label>
+      <input type="text" id="campo-chave" placeholder="qz_..." autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <div style="margin-top: 12px;">
+        <button type="button" id="botao-salvar-chave">Salvar chave</button>
+      </div>
+      <p class="erro-campo" id="erro-chave" hidden>Isso não parece uma chave <code>qz_...</code> válida.</p>
+      <p class="selo-local">A chave fica só neste aparelho e só é enviada para a API do Quiz Jev.</p>
+    </div>
+  </section>
+
+  <!-- Tela 2: app principal (texto/foto → resposta). -->
+  <section id="tela-app" hidden>
+    <p id="instrucao-ios" hidden>
+      No iPhone, este app não recebe o menu Compartilhar diretamente: tire o print, volte aqui e escolha a foto na
+      galeria. Para instalar: toque em Compartilhar e depois em "Adicionar à Tela de Início".
+    </p>
+
+    <form id="form-consulta" class="cartao">
+      <label for="campo-texto">Cole a questão</label>
+      <textarea id="campo-texto" placeholder="Cole aqui o enunciado e as alternativas…"></textarea>
+
+      <div class="linha-imagem">
+        <label for="campo-arquivo">Ou mande um print</label>
+        <button type="button" id="botao-abrir-arquivo" class="botao-foto">Escolher / tirar foto</button>
+        <input type="file" id="campo-arquivo" accept="image/*" />
+
+        <div id="preview-imagem" hidden>
+          <img id="preview-img" alt="Prévia da imagem anexada" />
+          <button type="button" id="botao-remover-imagem" aria-label="Remover imagem">✕</button>
+        </div>
+      </div>
+
+      <p id="aviso-vazio" hidden>Cole o texto da questão ou anexe uma foto antes de consultar.</p>
+
+      <button type="submit" id="botao-enviar" class="botao-enviar">Consultar</button>
+    </form>
+
+    <div class="card" id="card" hidden></div>
+  </section>
+
+  <footer>
+    <a href="../index.html">Bookmarklet</a> · <a href="https://github.com/guilhermeb-ferrarezi/quiz-jev">código-fonte</a>
+  </footer>
+</main>
+
+<script src="../quiz-render.js"></script>
+<script>
+  // CSS compartilhado do card (bookmarklet/extensão/relay) + os únicos
+  // ajustes desta página: aqui o card é um bloco normal no fluxo da página
+  // (largura cheia, sem posição fixa), não um overlay flutuante.
+  (function () {
+    "use strict";
+    var style = document.createElement("style");
+    style.textContent =
+      QUIZ_JEV_CSS +
+      "\n.card { position: static !important; max-width: 100% !important; width: 100%; " +
+      "box-sizing: border-box; margin: 18px 0 0; animation: none !important; font-size: 15px; }" +
+      "\n.card.aberta { max-width: 100% !important; }" +
+      "\n.letra { font-size: 32px; }";
+    document.head.appendChild(style);
+  })();
+</script>
+<script>
+  document.getElementById("botao-abrir-arquivo").addEventListener("click", function () {
+    document.getElementById("campo-arquivo").click();
+  });
+</script>
+<script src="app.js"></script>
+</body>
+</html>

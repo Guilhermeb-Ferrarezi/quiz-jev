@@ -1,0 +1,29 @@
+{
+  "name": "Quiz Jev",
+  "short_name": "Quiz Jev",
+  "description": "Cole a questão ou mande um print pela tela de Compartilhar — o Quiz Jev responde.",
+  "start_url": "/quiz-jev/app/",
+  "scope": "/quiz-jev/app/",
+  "id": "/quiz-jev/app/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "lang": "pt-BR",
+  "background_color": "#18181b",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "/quiz-jev/app/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{ "name": "imagem", "accept": ["image/*"] }]
+    }
+  }
+}
