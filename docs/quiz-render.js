@@ -130,7 +130,12 @@ function quizJevTextoDaOpcao(opcoes, label) {
   return opcoes[label] || "";
 }
 
+// Só o bookmarklet (bookmarklet/quiz-jev.js) trata a tecla T; o app do
+// celular e a janela reserva (relay.html) não — lá a dica ficaria mentindo.
+var quizJevTemAtalhoT = false;
+
 function quizJevDica(texto) {
+  if (!texto && !quizJevTemAtalhoT) return document.createTextNode("");
   var d = quizJevEl("div", "dica");
   if (texto) {
     d.appendChild(document.createTextNode(texto));

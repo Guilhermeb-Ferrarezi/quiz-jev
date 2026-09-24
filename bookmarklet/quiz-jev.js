@@ -16,6 +16,7 @@
 // instalação (docs/index.html) — nunca lida de rede, nunca fica em arquivo
 // nenhum do repositório.
 var QUIZ_KEY = "__QUIZ_KEY__";
+quizJevTemAtalhoT = true;
 
 var QUIZ_JEV_API = "https://api.santos-tech.com/quiz/answer";
 var QUIZ_JEV_RELAY = "https://guilhermeb-ferrarezi.github.io/quiz-jev/relay.html";

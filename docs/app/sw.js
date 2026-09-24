@@ -16,7 +16,7 @@
 // precisam ficar em sincronia manual entre os dois arquivos, não há import
 // nenhum ligando eles.
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const APP_SHELL_CACHE = "quizjev-app-shell-" + CACHE_VERSION;
 
 // Cache separado e SEM versão no nome — não pode ser limpo no activate() de
