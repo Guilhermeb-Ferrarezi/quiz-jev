@@ -46,11 +46,23 @@ padrão, e o navegador pergunta se não permitir); e em site com
 página, sem canal de volta — o card avisa e recomenda o app ou a
 extensão. No celular a "janelinha" é uma aba que abre e fecha.
 
-**Instalação:** **https://guilhermeb-ferrarezi.github.io/quiz-jev/** — cole sua
-chave `qz_...`, arraste o link gerado para a barra de favoritos (ou copie o
-código pra criar o favorito à mão / no celular). A chave fica embutida só no
-seu favorito, gerada localmente no navegador — nunca trafega em requisição
-nenhuma nem fica em arquivo deste repositório.
+**Instalação:** **https://guilhermeb-ferrarezi.github.io/quiz-jev/** — clique
+em **Entrar com Santos Tech**, e o favorito sai pronto com uma chave `qz_` só
+sua; arraste o link gerado para a barra de favoritos (ou copie o código pra
+criar o favorito à mão / no celular). Quem recebeu uma chave à mão pode colar
+ela em vez de entrar.
+
+Como o login funciona: a página faz o OAuth do ecossistema (authorization
+code + PKCE, client `quiz-jev`) e troca o code **direto** por uma chave em
+`POST /quiz/keys` (backend `api-go`, no repo `santos-tech-infra`) — nunca por
+token de sessão. A chave vai só pro favorito: a página não guarda nada, nem
+em `localStorage`. Detalhes:
+
+- **Quem pode:** admin, ou quem tem `quiz-jev` em `permissions.oauth_clients`
+  (no próprio usuário ou no cargo). Os outros veem "sua conta não tem acesso".
+- **Uma chave ativa por conta:** gerar de novo desativa o favorito anterior —
+  útil se ele vazar.
+- **Cota:** 100 respostas por dia por chave.
 
 Uso: selecione o enunciado + alternativas na página da prova e clique no
 favorito. Enquanto a página não recarrega, `Alt+Q` repete o processo numa
