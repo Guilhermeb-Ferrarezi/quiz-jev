@@ -4,6 +4,16 @@
 // a uma CSP restritiva (`connect-src`/`style-src` bloqueando a origem da API e
 // até <style> inline).
 //
+// Como cada diretiva é contornada:
+//   - style-src: o CSS vai por adoptedStyleSheets e o resto por CSSOM
+//     (el.style.x = …), que a CSP não governa — nunca atributo style="".
+//   - connect-src: nenhum código DENTRO da página consegue falar com uma
+//     origem barrada — é o navegador que recusa. Mas window.open e
+//     postMessage não passam pela CSP, então a consulta sai por uma
+//     janelinha NOSSA (docs/relay.html, no GitHub Pages) que faz o fetch e
+//     devolve a resposta por postMessage; o card continua aqui, na página, e
+//     a janelinha se fecha sozinha. Ver "Ponte" abaixo.
+//
 // Este arquivo não é a URL `javascript:` final — é a FONTE legível. Quem gera
 // o bookmarklet é bookmarklet/build.js, que concatena render-shared.js (visual
 // do card, ver esse arquivo) + este arquivo dentro de um único IIFE e
@@ -20,6 +30,10 @@ quizJevTemAtalhoT = true;
 
 var QUIZ_JEV_API = "https://api.santos-tech.com/quiz/answer";
 var QUIZ_JEV_RELAY = "https://guilhermeb-ferrarezi.github.io/quiz-jev/relay.html";
+// Destino fixo de todo postMessage que leva a chave: se a janela for
+// redirecionada pra outra origem, o navegador descarta a mensagem em vez de
+// entregá-la a quem estiver lá.
+var QUIZ_JEV_RELAY_ORIGIN = "https://guilhermeb-ferrarezi.github.io";
 var QUIZ_JEV_ID = "__quiz-jev-bookmarklet";
 var QUIZ_JEV_TAMANHO_MINIMO_PX = 40;
 var QUIZ_JEV_MIMES_DIRETOS = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -28,15 +42,6 @@ var QUIZ_JEV_MIMES_DIRETOS = ["image/png", "image/jpeg", "image/webp", "image/gi
 // card) — igual ao ctxAtual da extensão: vive enquanto o card está aberto, e
 // é o que a tecla T usa pra abrir a pergunta livre sem seleção nova.
 var quizJevCtxAtual = null;
-
-// Detecta violação de connect-src via CSP — um sinal a mais (além do fetch()
-// rejeitado) de que o site está bloqueando a chamada à API. Registrado uma
-// vez só, no primeiro carregamento do bookmarklet nesta página.
-document.addEventListener("securitypolicyviolation", function (ev) {
-  if (ev.violatedDirective && ev.violatedDirective.indexOf("connect-src") === 0) {
-    quizJevCtxAtual && (quizJevCtxAtual.violacaoConnectSrc = true);
-  }
-});
 
 function quizJevFecharImediato() {
   var host = document.getElementById(QUIZ_JEV_ID);
@@ -290,42 +295,289 @@ function quizJevChamarApi(payload) {
   });
 }
 
-// ---- Plano B: janela relay ----
-// `janela`, se passada, é uma window já aberta NO MESMO TICK do gesto do
-// usuário (caso "nem o card pôde ser desenhado" de quizJevRun). Senão, abre
-// uma nova aqui — sempre a partir de um clique (botão "Abrir resposta em
-// janela"), nunca depois de um `await`, então o bloqueador de pop-up não
-// entra no caminho.
+// Mensagem que leva a consulta pra janela relay (chave inclusa).
+function quizJevMensagemRelay(payload) {
+  var msg = { raw: payload.raw, key: QUIZ_KEY };
+  if (payload.ask) msg.ask = payload.ask;
+  if (payload.imageBase64) {
+    msg.imageBase64 = payload.imageBase64;
+    msg.imageMime = payload.imageMime;
+  } else if (payload.imageUrl) {
+    msg.imageUrl = payload.imageUrl;
+  }
+  return msg;
+}
+
+// ---- Ponte: consulta por uma janelinha nossa quando a CSP barra o fetch ----
 //
-// `payloadOuPromise` pode ser o payload já pronto OU uma Promise dele (caso
-// "sem card": a imagem ainda está sendo resolvida quando a janela abre). O
-// listener de handshake é registrado JÁ, antes de esperar o payload — se
-// fosse o contrário (esperar o payload pra só then registrar o listener), a
-// janela relay poderia mandar "quizjev-pronto" antes de alguém estar
-// escutando, e a mensagem se perderia pra sempre.
+// Estado por página (em `window`, porque cada clique no favorito roda um IIFE
+// novo e o atalho Alt+Q guarda o fechamento do primeiro):
+//   window.__quizJevViaPonte  undefined = ainda não sabemos
+//                             false     = fetch direto funciona aqui
+//                             true      = CSP barra — usar a ponte
+//
+// O bloqueador de pop-up só deixa window.open passar logo depois de um gesto
+// (clique/tecla). Por isso a janela é aberta de forma SÍNCRONA no gesto
+// quando já sabemos que precisa dela, e só no primeiro uso da página ela
+// depende da sondagem abaixo — que, barrada pela CSP, falha em poucos
+// milissegundos, bem dentro da janela de tempo do gesto. Se mesmo assim o
+// navegador barrar, o card mostra um botão (clique novo = gesto garantido).
+
+// HEAD no-cors no próprio endpoint: a CSP decide antes de sair qualquer
+// byte, então é rejeitado na hora se o site barra a API; se não barra,
+// qualquer resposta (até 405) resolve. Roda uma vez por página.
+function quizJevSondar() {
+  if (window.__quizJevViaPonte === true || window.__quizJevViaPonte === false) {
+    return Promise.resolve(window.__quizJevViaPonte);
+  }
+  if (!window.__quizJevSondagem) {
+    window.__quizJevSondagem = fetch(QUIZ_JEV_API, { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit" }).then(
+      function () {
+        window.__quizJevViaPonte = false;
+        return false;
+      },
+      function () {
+        window.__quizJevViaPonte = true;
+        return true;
+      }
+    );
+  }
+  return window.__quizJevSondagem;
+}
+
+// Janelinha pequena no canto superior direito da janela da prova.
+function quizJevRecursosJanela(largura, altura) {
+  var esq = Math.max(0, (window.screenX || 0) + (window.outerWidth || largura) - largura - 24);
+  var topo = Math.max(0, (window.screenY || 0) + 80);
+  return "popup,width=" + largura + ",height=" + altura + ",left=" + esq + ",top=" + topo;
+}
+
+// Abre a janela da ponte e já registra o listener do handshake — antes de
+// qualquer outra coisa, senão o "quizjev-pronto" da janela poderia chegar
+// antes de alguém estar escutando. Retorna null se o navegador barrar.
+function quizJevAbrirPonte() {
+  var w = null;
+  try {
+    w = window.open(QUIZ_JEV_RELAY, "_blank", quizJevRecursosJanela(340, 170));
+  } catch (e) {
+    w = null;
+  }
+  if (!w) return null;
+  var ponte = { janela: w };
+  ponte.pronta = new Promise(function (resolve) {
+    var aoAvisar = function (ev) {
+      if (ev.source !== w || ev.origin !== QUIZ_JEV_RELAY_ORIGIN) return;
+      if (!ev.data || ev.data.type !== "quizjev-pronto") return;
+      window.removeEventListener("message", aoAvisar);
+      resolve();
+    };
+    window.addEventListener("message", aoAvisar);
+    ponte.desistir = function () {
+      window.removeEventListener("message", aoAvisar);
+    };
+  });
+  return ponte;
+}
+
+// Manda a consulta pela ponte e espera a resposta voltar. A janela faz o
+// fetch, devolve {type:"quizjev-resposta", id, ok, data|message} e se fecha.
+function quizJevViaPonte(payload, ponte) {
+  var w = ponte.janela;
+  var id = "q" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  return new Promise(function (resolve, reject) {
+    var conectada = false;
+    var terminou = false;
+    var vigia = null;
+    var limite = null;
+    function terminar(erro, dados) {
+      if (terminou) return;
+      terminou = true;
+      window.removeEventListener("message", aoResponder);
+      clearInterval(vigia);
+      clearTimeout(limite);
+      if (ponte.desistir) ponte.desistir();
+      if (erro) {
+        try {
+          w.close();
+        } catch (e) {
+          // janela de outra origem já isolada — nada a fazer
+        }
+        reject(erro);
+      } else {
+        resolve(dados);
+      }
+    }
+    function aoResponder(ev) {
+      if (ev.source !== w || ev.origin !== QUIZ_JEV_RELAY_ORIGIN) return;
+      var d = ev.data;
+      if (!d || d.type !== "quizjev-resposta" || d.id !== id) return;
+      if (d.ok) terminar(null, d.data);
+      else terminar(new Error(d.message || "falhou"));
+    }
+    window.addEventListener("message", aoResponder);
+    ponte.pronta.then(function () {
+      if (terminou) return;
+      conectada = true;
+      var msg = quizJevMensagemRelay(payload);
+      msg.ponte = true;
+      msg.id = id;
+      w.postMessage(msg, QUIZ_JEV_RELAY_ORIGIN);
+    });
+    // Janela fechada à mão, ou já nascida "fechada" pra nós: com
+    // Cross-Origin-Opener-Policy: same-origin o site corta o vínculo com
+    // qualquer janela que abra, e aí não existe canal nenhum de volta.
+    vigia = setInterval(function () {
+      if (!w.closed) return;
+      terminar(
+        new Error(
+          conectada
+            ? "A janela de consulta foi fechada antes da resposta."
+            : "Este site isola as janelas que abre (COOP), então a consulta não tem como voltar pra cá. Use o app do celular ou a extensão neste site."
+        )
+      );
+    }, 400);
+    // Orçamento do servidor com imagem é de até ~50s; folga por cima disso.
+    limite = setTimeout(function () {
+      terminar(new Error(conectada ? "A consulta demorou demais — tente de novo." : "A janela de consulta não carregou — tente de novo."));
+    }, 70000);
+  });
+}
+
+function quizJevErroPrecisaClique() {
+  var e = new Error("pop-up barrado");
+  e.quizJevPrecisaClique = true;
+  return e;
+}
+
+// Chamado SÍNCRONO, dentro do gesto (clique no favorito, Alt+Q, Enter na
+// pergunta): decide o caminho e, se já sabemos que é a ponte, abre a janela
+// agora, enquanto o gesto ainda vale. `modo` resolve pra "direto", "ponte"
+// ou "clique" (ponte necessária mas o navegador barrou a janela).
+function quizJevNovoTransporte() {
+  var t = { ponte: null };
+  if (window.__quizJevViaPonte === true) {
+    t.ponte = quizJevAbrirPonte();
+    t.modo = Promise.resolve(t.ponte ? "ponte" : "clique");
+  } else if (window.__quizJevViaPonte === false) {
+    t.modo = Promise.resolve("direto");
+  } else {
+    t.modo = quizJevSondar().then(function (viaPonte) {
+      if (!viaPonte) return "direto";
+      t.ponte = quizJevAbrirPonte();
+      return t.ponte ? "ponte" : "clique";
+    });
+  }
+  return t;
+}
+
+// Consulta pelo caminho que o transporte escolheu. Erro com
+// quizJevPrecisaClique = mostrar o botão da ponte no card.
+function quizJevConsultar(payload, t) {
+  return t.modo.then(function (modo) {
+    if (modo === "ponte") return quizJevViaPonte(payload, t.ponte);
+    if (modo === "clique") throw quizJevErroPrecisaClique();
+    return quizJevChamarApi(payload).catch(function (e) {
+      if (e.quizJevApiError) throw e;
+      // A sondagem passou mas a chamada de verdade não chegou a ter resposta
+      // HTTP (rede instável, CSP mudou): tenta a ponte a partir daqui.
+      window.__quizJevViaPonte = true;
+      var ponte = quizJevAbrirPonte();
+      if (ponte) return quizJevViaPonte(payload, ponte);
+      throw quizJevErroPrecisaClique();
+    });
+  });
+}
+
+function quizJevAindaAberto(ctx) {
+  return !!document.getElementById(QUIZ_JEV_ID) && quizJevCtxAtual === ctx;
+}
+
+// Liga uma consulta ao card de `ctx`: resposta, erro ou botão da ponte.
+// `depois` roda quando a consulta termina (em qualquer desfecho).
+function quizJevAcompanhar(consulta, ctx, payload, comImagem, imagemFalhou, depois) {
+  var card = ctx.card;
+  consulta.then(
+    function (data) {
+      if (depois) depois();
+      if (!quizJevAindaAberto(ctx)) return;
+      quizJevLimpar(card);
+      quizJevMontarResposta(card, data, comImagem, imagemFalhou);
+      quizJevPosicionar(card, ctx.rect);
+    },
+    function (e) {
+      if (depois) depois();
+      if (!quizJevAindaAberto(ctx)) return;
+      if (e && e.quizJevPrecisaClique) {
+        quizJevMostrarBotaoPonte(ctx, payload, comImagem, imagemFalhou, depois);
+        return;
+      }
+      quizJevLimpar(card);
+      quizJevMontarErro(card, e && e.message);
+      quizJevPosicionar(card, ctx.rect);
+    }
+  );
+}
+
+// Último recurso quando o navegador barrou a janela automática: o clique no
+// botão é um gesto novo, então a janela abre com certeza (salvo pop-ups
+// bloqueados de vez pra este site). A resposta volta pro MESMO card.
+function quizJevMostrarBotaoPonte(ctx, payload, comImagem, imagemFalhou, depois) {
+  var card = ctx.card;
+  quizJevLimpar(card);
+  card.classList.remove("carregando-ativo");
+  card.appendChild(
+    quizJevEl(
+      "div",
+      "erro",
+      "Este site bloqueia a conexão direta (CSP) e o navegador barrou a janelinha de consulta. Clique para consultar por ela — a resposta aparece aqui mesmo:"
+    )
+  );
+  var botao = document.createElement("button");
+  botao.type = "button";
+  botao.className = "botao-relay";
+  botao.textContent = "Consultar pela janela";
+  botao.addEventListener("click", function () {
+    var ponte = quizJevAbrirPonte();
+    if (!ponte) {
+      quizJevLimpar(card);
+      quizJevMontarErro(card, "O navegador bloqueou a janela. Permita pop-ups para este site e tente de novo.");
+      quizJevPosicionar(card, ctx.rect);
+      return;
+    }
+    window.__quizJevViaPonte = true;
+    quizJevLimpar(card);
+    quizJevMontarCarregando(card, comImagem ? "Analisando a imagem" : "Consultando");
+    quizJevPosicionar(card, ctx.rect);
+    quizJevAcompanhar(quizJevViaPonte(payload, ponte), ctx, payload, comImagem, imagemFalhou, depois);
+  });
+  card.appendChild(botao);
+  quizJevPosicionar(card, ctx.rect);
+}
+
+// ---- Janela relay exibindo a resposta ela mesma ----
+// Só pro caso "nem o card pôde ser desenhado" de quizJevRun: sem card na
+// página, a resposta aparece na própria janela. `janela` já foi aberta NO
+// MESMO TICK do gesto.
+//
+// `payloadOuPromise` pode ser o payload já pronto OU uma Promise dele (a
+// imagem ainda está sendo resolvida quando a janela abre). O listener de
+// handshake é registrado JÁ, antes de esperar o payload — senão o
+// "quizjev-pronto" da janela poderia chegar antes de alguém estar escutando.
 function quizJevAbrirRelay(payloadOuPromise, janela) {
-  var w = janela || window.open(QUIZ_JEV_RELAY, "_blank", "width=380,height=560");
+  var w = janela;
   if (!w) {
     quizJevAvisoSemCard("não consegui abrir a janela de resposta — permita pop-ups para este site e tente de novo.");
     return;
   }
   var enviado = false;
   var handler = function (ev) {
-    if (ev.source !== w) return;
+    if (ev.source !== w || ev.origin !== QUIZ_JEV_RELAY_ORIGIN) return;
     if (!ev.data || ev.data.type !== "quizjev-pronto") return;
     if (enviado) return;
     enviado = true;
     window.removeEventListener("message", handler);
     Promise.resolve(payloadOuPromise).then(function (payload) {
-      var msg = { raw: payload.raw, key: QUIZ_KEY };
-      if (payload.ask) msg.ask = payload.ask;
-      if (payload.imageBase64) {
-        msg.imageBase64 = payload.imageBase64;
-        msg.imageMime = payload.imageMime;
-      } else if (payload.imageUrl) {
-        msg.imageUrl = payload.imageUrl;
-      }
-      w.postMessage(msg, "*");
+      w.postMessage(quizJevMensagemRelay(payload), QUIZ_JEV_RELAY_ORIGIN);
     });
   };
   window.addEventListener("message", handler);
@@ -339,12 +591,12 @@ function quizJevAvisoSemCard(texto) {
   try {
     var div = document.createElement("div");
     div.textContent = "Quiz Jev: " + texto;
-    div.setAttribute(
-      "style",
+    // cssText (CSSOM), não setAttribute("style"): o atributo é barrado por
+    // style-src sem 'unsafe-inline', o CSSOM não.
+    div.style.cssText =
       "position:fixed;z-index:2147483647;top:12px;right:12px;max-width:300px;" +
-        "background:#18181b;color:#fff;padding:10px 14px;border-radius:8px;" +
-        "font:13px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.3);"
-    );
+      "background:#18181b;color:#fff;padding:10px 14px;border-radius:8px;" +
+      "font:13px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.3);";
     document.body.appendChild(div);
     setTimeout(function () {
       if (div.parentNode) div.parentNode.removeChild(div);
@@ -354,26 +606,8 @@ function quizJevAvisoSemCard(texto) {
   }
 }
 
-function quizJevMostrarBotaoRelay(card, rect, payload) {
-  quizJevLimpar(card);
-  card.classList.remove("carregando-ativo");
-  card.appendChild(
-    quizJevEl("div", "erro", "Este site bloqueia a chamada direta (CSP). Abra a resposta numa janela separada:")
-  );
-  var botao = document.createElement("button");
-  botao.type = "button";
-  botao.className = "botao-relay";
-  botao.textContent = "Abrir resposta em janela";
-  botao.addEventListener("click", function () {
-    quizJevAbrirRelay(payload);
-    quizJevFechar();
-  });
-  card.appendChild(botao);
-  quizJevPosicionar(card, rect);
-}
-
 // ---- Fluxo principal (equivalente a processarSelecao) ----
-function quizJevProcessarComCard(raw, range, rect, ctxCard) {
+function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
   var card = ctxCard.card;
   quizJevMontarCarregando(card, "Consultando");
   quizJevPosicionar(card, rect);
@@ -402,28 +636,11 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard) {
       imagemFalhou = true;
     }
 
+    quizJevLimpar(card);
     quizJevMontarCarregando(card, temImagem ? "Analisando a imagem" : "Consultando");
     quizJevPosicionar(card, rect);
 
-    quizJevChamarApi(payload)
-      .then(function (data) {
-        if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== contexto) return;
-        quizJevLimpar(card);
-        quizJevMontarResposta(card, data, temImagem, imagemFalhou);
-        quizJevPosicionar(card, rect);
-      })
-      .catch(function (e) {
-        if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== contexto) return;
-        if (e.quizJevApiError) {
-          quizJevLimpar(card);
-          quizJevMontarErro(card, e.message);
-          quizJevPosicionar(card, rect);
-        } else {
-          // fetch rejeitou sem chegar a ter resposta HTTP: bloqueio de
-          // connect-src ou rede fora do ar — plano B via botão (gesto novo).
-          quizJevMostrarBotaoRelay(card, rect, payload);
-        }
-      });
+    quizJevAcompanhar(quizJevConsultar(payload, transporte), contexto, payload, temImagem, imagemFalhou);
   });
 }
 
@@ -471,7 +688,8 @@ function quizJevRun() {
     return;
   }
 
-  quizJevProcessarComCard(raw, range, rect, ctxCard);
+  // Ainda no mesmo tick do gesto — ver quizJevNovoTransporte.
+  quizJevProcessarComCard(raw, range, rect, ctxCard, quizJevNovoTransporte());
 }
 
 // Alt+Shift+Q: pergunta livre direta (equivalente a processarPerguntaDireta).
@@ -507,6 +725,9 @@ function quizJevProcessarPerguntaDireta() {
     imageMime: null,
     imageUrl: null,
   };
+  // Já descobre se a página barra a API enquanto a pessoa digita: no Enter a
+  // decisão fica síncrona e a janela da ponte (se precisar) abre no gesto.
+  quizJevSondar();
   quizJevAbrirPerguntar();
 }
 
@@ -535,7 +756,10 @@ function quizJevAbrirPerguntar() {
   });
 }
 
+// Chamada de dentro do keydown do Enter — o transporte é criado primeiro,
+// ainda dentro do gesto.
 function quizJevEnviarPergunta(pergunta) {
+  var transporte = quizJevNovoTransporte();
   var ctx = quizJevCtxAtual;
   var card = ctx.card;
   quizJevLimpar(card);
@@ -548,25 +772,9 @@ function quizJevEnviarPergunta(pergunta) {
   } else if (ctx.imageUrl) {
     payload.imageUrl = ctx.imageUrl;
   }
-  quizJevChamarApi(payload)
-    .then(function (data) {
-      if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== ctx) return;
-      quizJevLimpar(card);
-      quizJevMontarResposta(card, data, !!(ctx.imageBase64 || ctx.imageUrl), false);
-      quizJevPosicionar(card, ctx.rect);
-      ctx.perguntando = false;
-    })
-    .catch(function (e) {
-      if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== ctx) return;
-      if (e.quizJevApiError) {
-        quizJevLimpar(card);
-        quizJevMontarErro(card, e.message);
-        quizJevPosicionar(card, ctx.rect);
-      } else {
-        quizJevMostrarBotaoRelay(card, ctx.rect, payload);
-      }
-      ctx.perguntando = false;
-    });
+  quizJevAcompanhar(quizJevConsultar(payload, transporte), ctx, payload, !!(ctx.imageBase64 || ctx.imageUrl), false, function () {
+    ctx.perguntando = false;
+  });
 }
 
 // Atalho Alt+Q / Alt+Shift+Q: registrado uma vez só por página (flag em
