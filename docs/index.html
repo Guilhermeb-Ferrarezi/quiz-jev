@@ -76,6 +76,11 @@
   footer { margin-top: 32px; font-size: 12px; color: var(--muted); }
   footer a { color: var(--accent); }
   code.inline { font: 12px ui-monospace, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .botao-principal { background: var(--accent); color: #fff; }
+  .status-login { font-size: 13px; color: var(--muted); }
+  .status-login.ok { color: var(--ok); }
+  details { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -83,7 +88,7 @@
   <h1>Quiz Jev — instalar o bookmarklet</h1>
   <p class="sub">Responde a questão de múltipla escolha selecionada, em qualquer site — sem instalar extensão.</p>
 
-  <span class="selo-local">🔒 a chave nunca sai do seu navegador — geração 100% local, sem nenhuma requisição de rede</span>
+  <span class="selo-local">🔒 a chave fica só no seu favorito — esta página não guarda nada, e o favorito é montado aqui mesmo, no seu navegador</span>
 
   <div class="card">
     <h2>Está no celular?</h2>
@@ -95,13 +100,23 @@
   </div>
 
   <div class="card">
-    <h2>1. Cole sua chave</h2>
-    <label for="campo-chave">Chave de acesso (começa com <code class="inline">qz_</code>)</label>
-    <input type="text" id="campo-chave" placeholder="qz_..." autocomplete="off" spellcheck="false" />
+    <h2>1. Entre com sua conta</h2>
+    <p class="aviso-arrastar">Entre com a sua conta Santos Tech e o favorito sai pronto, já com uma chave só sua. Gerar de novo desativa o favorito anterior.</p>
     <div class="linha-botao">
-      <button id="botao-gerar" type="button">Gerar bookmarklet</button>
-      <span id="erro-campo" class="erro-campo">Isso não parece uma chave <code class="inline">qz_...</code> válida.</span>
+      <button id="botao-entrar" type="button" class="botao-principal">Entrar com Santos Tech</button>
+      <span id="status-login" class="status-login" role="status"></span>
     </div>
+    <p id="erro-login" class="erro-campo" role="alert"></p>
+
+    <details id="detalhes-chave">
+      <summary>Já tem uma chave <code class="inline">qz_...</code>? Cole aqui</summary>
+      <label for="campo-chave">Chave de acesso (começa com <code class="inline">qz_</code>)</label>
+      <input type="text" id="campo-chave" placeholder="qz_..." autocomplete="off" spellcheck="false" />
+      <div class="linha-botao">
+        <button id="botao-gerar" type="button">Gerar bookmarklet</button>
+        <span id="erro-campo" class="erro-campo">Isso não parece uma chave <code class="inline">qz_...</code> válida.</span>
+      </div>
+    </details>
   </div>
 
   <div class="card resultado" id="bloco-resultado">
@@ -137,12 +152,23 @@
 <script>
 (function () {
   "use strict";
-  // Tudo aqui roda só no navegador de quem está instalando — nenhuma parte
-  // deste script faz fetch/XHR. window.QUIZ_JEV_BOOKMARKLET_TEMPLATE já
-  // chegou pronto com o <script src="bookmarklet.min.js"> acima (um arquivo
-  // estático do próprio site, gerado em build por bookmarklet/build.js a
-  // partir de bookmarklet/render-shared.js + bookmarklet/quiz-jev.js).
+  // O favorito é montado aqui, no navegador de quem está instalando:
+  // window.QUIZ_JEV_BOOKMARKLET_TEMPLATE chegou pronto com o
+  // <script src="bookmarklet.min.js"> acima (arquivo estático gerado por
+  // bookmarklet/build.js). A única conversa com a rede é o login: OAuth do
+  // ecossistema (authorization code + PKCE, client "quiz-jev") e a troca do
+  // code por uma chave qz_ em POST /quiz/keys — nunca por token de sessão.
+  // A chave não é guardada em lugar nenhum desta página (nem localStorage):
+  // vai direto pro favorito.
   var RE_CHAVE = /^qz_[A-Za-z0-9_-]{10,}$/;
+  var API = "https://api.santos-tech.com";
+  var CLIENT_ID = "quiz-jev";
+  // Precisa bater EXATAMENTE com o redirect_uri cadastrado no client (a
+  // página pode ter sido aberta como .../index.html — não usar location).
+  var REDIRECT_URI = "https://guilhermeb-ferrarezi.github.io/quiz-jev/";
+  // sessionStorage: sobrevive ao redirecionamento de ida e volta do login
+  // nesta aba, e some quando ela fecha. Guarda só o verifier/state do PKCE.
+  var CHAVE_PKCE = "quizjev.pkce";
 
   var campoChave = document.getElementById("campo-chave");
   var botaoGerar = document.getElementById("botao-gerar");
@@ -153,6 +179,10 @@
   var botaoCopiar = document.getElementById("botao-copiar");
   var copiado = document.getElementById("copiado");
 
+  var botaoEntrar = document.getElementById("botao-entrar");
+  var statusLogin = document.getElementById("status-login");
+  var erroLogin = document.getElementById("erro-login");
+
   function gerar() {
     var chave = campoChave.value.trim();
     if (!RE_CHAVE.test(chave)) {
@@ -161,12 +191,17 @@
       return;
     }
     erroCampo.classList.remove("visivel");
+    montarFavorito(chave, erroCampo);
+  }
 
+  // Monta o favorito com a chave (já validada). `ondeErro` é onde avisar se
+  // o template não carregou. Retorna true se deu certo.
+  function montarFavorito(chave, ondeErro) {
     var template = window.QUIZ_JEV_BOOKMARKLET_TEMPLATE;
     if (!template || template.indexOf("__QUIZ_KEY__") === -1) {
-      erroCampo.textContent = "Não consegui carregar o código do bookmarklet (bookmarklet.min.js). Recarregue a página.";
-      erroCampo.classList.add("visivel");
-      return;
+      ondeErro.textContent = "Não consegui carregar o código do bookmarklet (bookmarklet.min.js). Recarregue a página.";
+      ondeErro.classList.add("visivel");
+      return false;
     }
     // Substituição simples de texto: __QUIZ_KEY__ já está DENTRO de aspas no
     // template (var QUIZ_KEY = "__QUIZ_KEY__";), e RE_CHAVE só aceita
@@ -179,7 +214,146 @@
     codigoBookmarklet.value = url;
     blocoResultado.classList.add("visivel");
     copiado.classList.remove("visivel");
+    return true;
   }
+
+  // ---- Login (OAuth authorization code + PKCE S256) ----
+
+  function base64url(bytes) {
+    var bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function aleatorio(n) {
+    var b = new Uint8Array(n);
+    crypto.getRandomValues(b);
+    return base64url(b);
+  }
+
+  function mostrarErroLogin(texto) {
+    statusLogin.textContent = "";
+    statusLogin.classList.remove("ok");
+    erroLogin.textContent = texto;
+    erroLogin.classList.add("visivel");
+    botaoEntrar.disabled = false;
+  }
+
+  function entrar() {
+    erroLogin.classList.remove("visivel");
+    if (!window.crypto || !crypto.subtle) {
+      mostrarErroLogin("Este navegador não tem as funções de segurança necessárias pro login. Use um navegador atualizado.");
+      return;
+    }
+    botaoEntrar.disabled = true;
+    statusLogin.textContent = "Abrindo o login…";
+    var verifier = aleatorio(32);
+    var state = aleatorio(16);
+    crypto.subtle
+      .digest("SHA-256", new TextEncoder().encode(verifier))
+      .then(function (hash) {
+        try {
+          sessionStorage.setItem(CHAVE_PKCE, JSON.stringify({ verifier: verifier, state: state }));
+        } catch (e) {
+          throw new Error("Não consegui guardar os dados do login nesta aba (armazenamento bloqueado).");
+        }
+        var q = new URLSearchParams({
+          client_id: CLIENT_ID,
+          redirect_uri: REDIRECT_URI,
+          response_type: "code",
+          code_challenge: base64url(new Uint8Array(hash)),
+          code_challenge_method: "S256",
+          state: state,
+        });
+        location.assign(API + "/oauth/authorize?" + q.toString());
+      })
+      .catch(function (e) {
+        mostrarErroLogin((e && e.message) || "Não consegui iniciar o login.");
+      });
+  }
+
+  // Volta do login: ?code=&state= (ou ?error=) na URL desta página.
+  function aoVoltarDoLogin() {
+    var params = new URLSearchParams(location.search);
+    var code = params.get("code");
+    var erro = params.get("error");
+    if (!code && !erro) return;
+    // Tira o code da barra de endereço e do histórico já — ele é de uso
+    // único, mas não precisa ficar à vista nem ir parar num favorito.
+    history.replaceState(null, "", location.pathname + location.hash);
+
+    var guardado = null;
+    try {
+      guardado = JSON.parse(sessionStorage.getItem(CHAVE_PKCE) || "null");
+      sessionStorage.removeItem(CHAVE_PKCE);
+    } catch (e) {
+      guardado = null;
+    }
+    if (erro) {
+      mostrarErroLogin(erro === "access_denied" ? "Login cancelado." : "O login falhou (" + erro + "). Tente de novo.");
+      return;
+    }
+    // state confere = foi ESTA aba que começou o login (anti-CSRF do OAuth).
+    if (!guardado || !guardado.verifier || guardado.state !== params.get("state")) {
+      mostrarErroLogin("Este retorno de login não foi iniciado nesta aba. Clique em “Entrar com Santos Tech” de novo.");
+      return;
+    }
+
+    botaoEntrar.disabled = true;
+    statusLogin.textContent = "Gerando sua chave…";
+    // Form-urlencoded (como o /oauth/token): requisição "simples", sem preflight.
+    fetch(API + "/quiz/keys", {
+      method: "POST",
+      body: new URLSearchParams({
+        code: code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: guardado.verifier,
+        client_id: CLIENT_ID,
+      }),
+      credentials: "omit",
+    })
+      .then(function (res) {
+        return res
+          .json()
+          .catch(function () {
+            return {};
+          })
+          .then(function (data) {
+            if (!res.ok) {
+              var e = new Error(data.message || "erro " + res.status);
+              e.codigo = data.code;
+              throw e;
+            }
+            return data;
+          });
+      })
+      .then(function (data) {
+        var chave = data.accessKey;
+        if (typeof chave !== "string" || !RE_CHAVE.test(chave)) throw new Error("O servidor devolveu uma chave em formato inesperado.");
+        botaoEntrar.disabled = false;
+        if (!montarFavorito(chave, erroLogin)) {
+          statusLogin.textContent = "";
+          return;
+        }
+        botaoEntrar.textContent = "Gerar de novo";
+        statusLogin.classList.add("ok");
+        statusLogin.textContent =
+          "Pronto! Chave gerada para a sua conta (" + (data.dailyLimit || 100) + " respostas por dia). Se havia um favorito antigo, ele parou de funcionar.";
+        blocoResultado.scrollIntoView({ behavior: "smooth", block: "start" });
+      })
+      .catch(function (e) {
+        if (e && e.codigo === "FORBIDDEN") {
+          mostrarErroLogin("Sua conta não tem acesso ao Quiz Jev. Peça a um administrador para liberar.");
+        } else if (e && e.codigo === "INVALID_GRANT") {
+          mostrarErroLogin("O login expirou antes de terminar. Clique em “Entrar com Santos Tech” de novo.");
+        } else {
+          mostrarErroLogin((e && e.message) || "Não consegui gerar a chave. Tente de novo.");
+        }
+      });
+  }
+
+  botaoEntrar.addEventListener("click", entrar);
+  aoVoltarDoLogin();
 
   botaoGerar.addEventListener("click", gerar);
   campoChave.addEventListener("keydown", function (e) {
