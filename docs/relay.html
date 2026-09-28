@@ -56,7 +56,16 @@
 
   // Formato esperado, mandado pelo bookmarklet via postMessage:
   // { raw: string, key: string, ask?: string, imageBase64?: string,
-  //   imageMime?: string, imageUrl?: string }
+  //   imageMime?: string, imageUrl?: string, ponte?: true, id?: string }
+  //
+  // Dois modos:
+  //   - ponte (ponte: true, id): o site da prova barra a API por CSP, então
+  //     esta janela só faz o fetch no lugar dele, devolve o resultado ao
+  //     opener ({type:"quizjev-resposta", id, ok, data|message}) — que
+  //     mostra no card da própria página — e se fecha.
+  //   - exibição (sem `ponte`): a resposta aparece aqui mesmo. É o que os
+  //     favoritos instalados antes da ponte mandam, e o caso "sem card"
+  //     do bookmarklet atual — precisa continuar funcionando.
   function formatoValido(d) {
     if (!d || typeof d !== "object") return false;
     if (typeof d.raw !== "string" || !d.raw) return false;
@@ -64,10 +73,34 @@
     if (d.ask !== undefined && typeof d.ask !== "string") return false;
     if (d.imageBase64 !== undefined && typeof d.imageBase64 !== "string") return false;
     if (d.imageUrl !== undefined && typeof d.imageUrl !== "string") return false;
+    if (d.ponte !== undefined && (d.ponte !== true || typeof d.id !== "string" || !d.id)) return false;
     return true;
   }
 
-  function processarMensagem(d) {
+  // Devolve o resultado da ponte para a origem que pediu (não "*": se o
+  // opener tiver navegado pra outro site nesse meio-tempo, o navegador
+  // descarta). Origem opaca ("null") não é destino válido — aí vai "*",
+  // e o conteúdo é só a resposta, sem chave nenhuma.
+  function responderAoOpener(origem, resposta) {
+    if (!window.opener) return false;
+    try {
+      window.opener.postMessage(resposta, origem && origem !== "null" ? origem : "*");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function fecharEmBreve() {
+    quizJevLimpar(card);
+    card.appendChild(quizJevEl("div", "motivo", "Resposta enviada para a página da questão."));
+    // Pequena folga pra mensagem sair antes da janela sumir.
+    setTimeout(function () {
+      window.close();
+    }, 150);
+  }
+
+  function processarMensagem(d, origem) {
     var payload = { raw: d.raw };
     if (d.ask) payload.ask = d.ask;
     if (d.imageBase64) {
@@ -95,12 +128,21 @@
           });
       })
       .then(function (data) {
+        if (d.ponte && responderAoOpener(origem, { type: "quizjev-resposta", id: d.id, ok: true, data: data })) {
+          fecharEmBreve();
+          return;
+        }
         quizJevLimpar(card);
         quizJevMontarResposta(card, data, comImagem, false);
       })
       .catch(function (e) {
+        var mensagem = (e && e.message) || "falhou";
+        if (d.ponte && responderAoOpener(origem, { type: "quizjev-resposta", id: d.id, ok: false, message: mensagem })) {
+          fecharEmBreve();
+          return;
+        }
         quizJevLimpar(card);
-        quizJevMontarErro(card, e && e.message);
+        quizJevMontarErro(card, mensagem);
       });
   }
 
@@ -113,21 +155,39 @@
     if (processado) return;
     if (!formatoValido(ev.data)) return;
     processado = true;
-    processarMensagem(ev.data);
+    clearInterval(repetidor);
+    processarMensagem(ev.data, ev.origin);
   });
 
   // Handshake: avisa o opener que já está pronta pra receber — evita perder
   // a mensagem se o bookmarklet mandasse antes desta página carregar.
+  // Repetido até a consulta chegar: custa nada, e cobre um opener que
+  // registrou o listener um pouco depois de abrir a janela. Duplicatas são
+  // ignoradas do lado de lá.
+  var repetidor = null;
+  function avisarPronta() {
+    if (processado || !window.opener) return;
+    try {
+      window.opener.postMessage({ type: "quizjev-pronto" }, "*");
+    } catch (e) {
+      // opener sumiu — o timeout abaixo avisa
+    }
+  }
   if (window.opener) {
-    window.opener.postMessage({ type: "quizjev-pronto" }, "*");
+    avisarPronta();
+    repetidor = setInterval(avisarPronta, 300);
   } else {
     quizJevLimpar(card);
-    quizJevMontarErro(card, "Esta janela foi aberta sem uma página de origem — abra pelo favorito Quiz Jev de novo.");
+    quizJevMontarErro(
+      card,
+      "Esta janela não consegue falar com a página de origem — ou foi aberta fora do favorito, ou o site isola as janelas que abre (COOP). Nesse caso, use o app do celular ou a extensão."
+    );
   }
 
   // Se nada chegar em 20s (aba de origem fechada, favorito antigo etc.),
   // avisa em vez de deixar "Consultando" girando pra sempre.
   setTimeout(function () {
+    clearInterval(repetidor);
     if (processado) return;
     quizJevLimpar(card);
     quizJevMontarErro(card, "Nada chegou da página de origem. Feche esta janela e clique no favorito de novo.");

@@ -19,9 +19,32 @@ Existem duas formas de usar, com o mesmo backend:
 
 Não requer instalação: um favorito que roda a mesma lógica de seleção +
 resposta direto na página da prova, mesmo em sites com CSP restritiva
-(`connect-src`/`style-src` bloqueando chamada externa) — nesse caso ele
-oferece um botão para abrir a resposta numa janelinha separada em vez de
-travar sem feedback.
+(`connect-src`/`style-src` bloqueando chamada externa). O card continua na
+própria página nos dois casos.
+
+**Como ele passa pela CSP.** O `style-src` é contornado aplicando o CSS por
+`adoptedStyleSheets` e CSSOM, que a CSP não governa. O `connect-src` não
+tem como ser furado de dentro da página — é o navegador que recusa a
+conexão. Mas `window.open` e `postMessage` não passam pela CSP. Então, quando
+o site barra a API, o bookmarklet abre uma janelinha nossa
+(`docs/relay.html`), que faz a consulta e devolve a resposta por
+`postMessage` pro card da página, e se fecha sozinha:
+
+1. No primeiro uso numa página, um `HEAD` na API descobre em milissegundos
+   se a CSP barra (sem CSP, a consulta segue direto, sem janela nenhuma).
+2. Se barra, a janelinha abre ainda dentro do "tempo do gesto" do clique ou
+   da tecla, então o bloqueador de pop-up deixa passar.
+3. A partir daí, na mesma página, `Alt+Q`, `Alt+Shift+Q` e o `Enter` da
+   pergunta livre já abrem a janela direto no gesto.
+4. Se o navegador barrar a janela mesmo assim, o card mostra o botão
+   **Consultar pela janela** (clique novo = gesto garantido), e a resposta
+   volta pro mesmo card.
+
+Limites que não têm contorno: o site precisa permitir pop-ups (é só o
+padrão, e o navegador pergunta se não permitir); e em site com
+`Cross-Origin-Opener-Policy: same-origin` a janela nasce sem vínculo com a
+página, sem canal de volta — o card avisa e recomenda o app ou a
+extensão. No celular a "janelinha" é uma aba que abre e fecha.
 
 **Instalação:** **https://guilhermeb-ferrarezi.github.io/quiz-jev/** — cole sua
 chave `qz_...`, arraste o link gerado para a barra de favoritos (ou copie o
