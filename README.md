@@ -144,7 +144,8 @@ o próprio card. Se não achar as lacunas ou ler menos de duas opções, o card 
 que faltou em vez de chutar. Só no modo Jev.
 
 **Preencher na página.** Nas respostas de lacunas, Certo/Errado e escolha única, o
-card ganha o botão **Preencher na página**. Só age quando você clica e só **marca**
+card ganha o botão **Preencher na página** (atalho **Alt+P**). Só age quando você clica
+(ou aperta o atalho) e só **marca**
 as opções (escolhe nos dropdowns e clica nos botões de rádio): nunca envia nem
 finaliza a atividade — conferir e enviar é com você. A comparação de texto é exata
 (com acento: "porque" ≠ "porquê"); sem correspondência exata, tenta sem acento.

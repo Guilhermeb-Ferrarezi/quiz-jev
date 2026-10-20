@@ -621,6 +621,19 @@ try {
   });
   conferir(JSON.stringify(pUni.pagina?.estado) === JSON.stringify([false, true, false, false]), `marcou a alternativa B (${JSON.stringify(pUni.pagina?.estado)}; ${pUni.pagina?.status})`);
 
+  console.log("preencher na página — atalho Alt+P faz o mesmo que o botão");
+  const pAtalho = await cenario("jev-preencher-atalho", "/radios-unica", {
+    modo: "jev",
+    analisePagina: async (cdp) => {
+      const tecla = (type) => cdp.enviar("Input.dispatchKeyEvent", { type, modifiers: 1, key: "p", code: "KeyP", windowsVirtualKeyCode: 80 });
+      await tecla("rawKeyDown");
+      await tecla("keyUp");
+      await Bun.sleep(1500);
+      return (await cdp.enviar("Runtime.evaluate", { returnByValue: true, expression: `({ marcados: [...document.querySelectorAll('input[type=radio]')].map((r) => r.checked), status: document.getElementById("__quiz-jev-bookmarklet").shadowRoot.querySelector(".preencher-area .motivo").textContent })` })).result.value;
+    },
+  });
+  conferir(JSON.stringify(pAtalho.pagina?.marcados) === JSON.stringify([false, true, false, false]), `Alt+P marcou a alternativa B (${JSON.stringify(pAtalho.pagina)})`);
+
   console.log("card recolhível: clicar na página recolhe (não fecha), pastilha reabre, Alt+W alterna, − esconde, × fecha");
   const etapas = {};
   const expr = (corpo) => `(() => { const h = document.getElementById("__quiz-jev-bookmarklet"); if (!h) return null; const c = h.shadowRoot.querySelector(".card"); return (${corpo})(c, h); })()`;

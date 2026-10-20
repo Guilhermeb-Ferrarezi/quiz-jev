@@ -1141,14 +1141,14 @@ function quizJevAdicionarPreencher(card, ctx, d) {
   var botao = document.createElement("button");
   botao.type = "button";
   botao.className = "botao-relay";
-  botao.textContent = "Preencher na página";
+  botao.textContent = "Preencher na página (Alt+P)";
   var estado = quizJevEl("div", "motivo");
   botao.addEventListener("click", function () {
     botao.disabled = true;
     botao.textContent = "Preenchendo…";
     quizJevPreencher(ctx, d).then(function (r) {
       botao.disabled = false;
-      botao.textContent = "Preencher de novo";
+      botao.textContent = "Preencher de novo (Alt+P)";
       estado.textContent = r.erros.length
         ? "Preenchi " + r.feitas + " de " + r.total + ". " + r.erros.join(" ")
         : "Preenchi " + r.feitas + " de " + r.total + ". Confira e envie você.";
@@ -1902,6 +1902,16 @@ if (!window.__quizJevBookmarklet) {
         if (document.getElementById(QUIZ_JEV_ID)) {
           e.preventDefault();
           quizJevAlternarCard();
+        }
+        return;
+      }
+      // Alt+P: o mesmo que clicar em "Preencher na página" (só se o card tem o botão).
+      if (tecla === "p" && !e.shiftKey) {
+        var host = document.getElementById(QUIZ_JEV_ID);
+        var botao = host && host.shadowRoot && host.shadowRoot.querySelector(".preencher-area button");
+        if (botao) {
+          e.preventDefault();
+          if (!botao.disabled) botao.click();
         }
         return;
       }
