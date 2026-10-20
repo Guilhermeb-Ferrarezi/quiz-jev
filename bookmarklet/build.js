@@ -4,8 +4,9 @@
 // com `node bookmarklet/build.js`.
 //
 // O que faz:
-//   1. Concatena render-shared.js (visual do card) + quiz-jev.js (lógica do
-//      bookmarklet) dentro de um único IIFE.
+//   1. Concatena render-shared.js (visual do card) + captura.js (contas da
+//      captura de imagem, testadas por captura.test.js) + quiz-jev.js (lógica
+//      do bookmarklet) dentro de um único IIFE.
 //   2. Minifica de um jeito simples e seguro: remove comentários de linha
 //      inteira (linhas que começam com `//` depois do trim) e comentários de
 //      bloco `/* */`, remove linhas em branco e o espaço nas pontas de cada
@@ -49,9 +50,10 @@ function ler(nome) {
 
 function main() {
   const shared = ler("render-shared.js");
+  const captura = ler("captura.js");
   const driver = ler("quiz-jev.js");
 
-  const fonteCompleta = shared + "\n" + driver;
+  const fonteCompleta = shared + "\n" + captura + "\n" + driver;
   if (fonteCompleta.indexOf("__QUIZ_KEY__") === -1) {
     throw new Error("placeholder __QUIZ_KEY__ não encontrado nas fontes — build cancelado");
   }

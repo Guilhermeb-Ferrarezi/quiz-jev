@@ -69,25 +69,55 @@ favorito. Enquanto a página não recarrega, `Alt+Q` repete o processo numa
 seleção nova sem precisar clicar de novo, e `Alt+Shift+Q` abre direto a
 pergunta livre.
 
-Diferenças em relação à extensão (limitações inerentes a não ter APIs de
-extensão disponíveis):
+**Imagem da questão.** Como a extensão, o favorito manda uma imagem quando a
+seleção encosta em algo visual, na ordem: (1) as imagens da própria página
+(`<img>`/`<picture>`/`<canvas>`), **todas empilhadas** numa só, lidas do arquivo
+original; (2) para tabela, SVG, fórmula, vídeo, `background-image` com arquivo —
+ou se (1) falhar — um **print da aba**, recortado na região da seleção (com
+rolagem e costura se ela não couber na tela); (3) por último, o endereço da
+primeira `<img>`, que o servidor baixa. Degradê/cor de fundo não conta como
+figura.
 
-- Sem `tabs.captureVisibleTab`, não há como fotografar a tela — a captura de
-  imagem funciona para `<img>`/`<picture>` (arquivo original ou, se
-  bloqueado, o endereço da imagem) e para um `<canvas>` que já exista na
-  página; tabela, SVG, vídeo ou `background-image` não são capturados.
-  Também usa só a primeira imagem da seleção (a extensão empilha várias e
-  faz rolagem-e-costura).
-- A transição animada de altura entre estados do card (da extensão) foi
-  simplificada para uma troca direta — as animações visuais (entrada, "pop"
-  da letra, barras, "Consultando" com bolinhas) continuam as mesmas.
+O print usa `getDisplayMedia` (a captura de tela do navegador, que a CSP da
+página não governa): no Chrome/Edge o navegador pergunta **uma vez** se pode
+compartilhar a aba atual; a captura fica aberta enquanto você usa o card e é
+solta sozinha depois de 5 minutos sem uso. O favorito esconde o próprio card (e
+elementos `fixed`/`sticky`, na costura) enquanto fotografa. Limites: Firefox/Zen
+não capturam "esta aba", então lá só valem as imagens do passo (1); a costura é
+só vertical (o que passar da largura da tela fica de fora); e a captura de aba
+não existe nos navegadores de celular — no celular, use o app.
+
+**Atalho de teclado.** Depois do primeiro uso numa página, `Alt+Q` e
+`Alt+Shift+Q` funcionam sem clicar de novo. Para o primeiro uso também sem mouse:
+no Chrome/Edge, deixe o favorito na **primeira posição** da barra e use
+`Alt+Shift+B` + `Enter`; no Firefox/Zen, dê ao favorito uma **palavra-chave**
+(Biblioteca → Propriedades) e use `Ctrl+L`, a palavra e `Enter`. Atalho global em
+qualquer aba, sem clique nenhum, só a extensão oferece.
+
+A transição animada de altura entre estados do card (da extensão) foi
+simplificada para uma troca direta — as animações visuais (entrada, "pop" da
+letra, barras, "Consultando" com bolinhas) continuam as mesmas.
 
 O código-fonte do bookmarklet vive em `bookmarklet/` (`render-shared.js` é o
-visual do card, reaproveitado por `docs/relay.html`; `quiz-jev.js` é a lógica
-de seleção/captura/chamada). `bookmarklet/build.js` (sem dependências) gera
+visual do card, reaproveitado por `docs/relay.html`; `captura.js` são as contas
+puras da captura de imagem; `quiz-jev.js` é a lógica de
+seleção/captura/chamada). `bookmarklet/build.js` (sem dependências) gera
 `docs/bookmarklet.min.js` e `docs/quiz-render.js`, publicados pelo GitHub
-Pages a partir de `docs/` — rode `node bookmarklet/build.js` depois de mexer
-nas fontes.
+Pages a partir de `docs/` — rode `bun bookmarklet/build.js` (ou `node`) depois
+de mexer nas fontes.
+
+Testes (precisam do [Bun](https://bun.sh); o segundo também do Chrome):
+
+```bash
+bun test bookmarklet/captura.test.js     # contas da captura: recorte, escala, costura
+bun bookmarklet/e2e/captura-e2e.mjs      # Chrome de verdade: tabela, costura, imagens empilhadas
+```
+
+O teste ponta a ponta sobe uma página de prova local, roda o bookmarklet gerado
+num Chrome com a captura de aba autorizada e **intercepta** a chamada à API
+(nada chega ao servidor): confere a imagem que seria enviada, inclusive que a
+costura não deixa vão. As imagens saem na pasta temporária (ou em
+`QUIZJEV_E2E_SAIDA`) para conferir a olho. Rode `bun bookmarklet/build.js` antes.
 
 ## Extensão de navegador
 

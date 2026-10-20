@@ -143,13 +143,40 @@ function quizJevCriarCard(rect) {
 
 // ---- Detecção de conteúdo visual na seleção ----
 // Mesma ideia de encontrarElementosVisuais (src/content.js): só olha dentro
-// do ancestral comum da seleção e confirma com range.intersectsNode(). Mas o
-// bookmarklet, sem tabs.captureVisibleTab, só tem DUAS formas de conseguir
-// bytes de imagem: ler o arquivo (<img>/<picture>) ou ler um <canvas> que já
-// existe na página. Sem API de print de tela, então TABLE/SVG/MATH/VIDEO/
-// background-image (que a extensão cobre fotografando a tela) ficam de fora
-// aqui — escopo reduzido deliberado, documentado no README.
+// do ancestral comum da seleção e confirma com range.intersectsNode().
+//
+// Bytes de imagem, o bookmarklet consegue de duas formas: lendo a fonte do
+// elemento (<img>/<picture>/<canvas> — sem pedir nada ao usuário) ou, pro resto
+// (tabela, SVG, fórmula, vídeo, fundo com arquivo), fotografando a ABA pela
+// captura de tela do navegador (getDisplayMedia, que a CSP da página não
+// governa). Ver quizJevResolverImagem.
+var QUIZ_JEV_TAGS_VISUAIS = ["IMG", "CANVAS", "SVG", "TABLE", "MATH", "PICTURE", "VIDEO", "FIGURE"];
+var QUIZ_JEV_TAGS_COM_BYTES = ["IMG", "PICTURE", "CANVAS"];
+var QUIZ_JEV_FOLGA_PX = 8;
+// Margem pro teto de 8 MB do servidor.
+var QUIZ_JEV_LIMITE_BYTES = 7 * 1024 * 1024;
+// Acima disso no maior lado a figura só pesa, sem ganho de leitura.
+var QUIZ_JEV_LIMITE_LADO_PX = 3000;
+// Varrer a página atrás de position:fixed custa uma getComputedStyle por
+// elemento; em DOM enorme não compensa (ver quizJevOcultarFixos).
+var QUIZ_JEV_LIMITE_ELEMENTOS_FIXOS = 4000;
+// A aba fica "compartilhada" enquanto o fluxo de captura está aberto; sem uso
+// por este tempo, o bookmarklet solta a captura (some o aviso do navegador).
+var QUIZ_JEV_OCIOSIDADE_TELA_MS = 5 * 60 * 1000;
+
+function quizJevTag(elemento) {
+  return (elemento.tagName || "").toUpperCase();
+}
+
 function quizJevElementoVisualRelevante(elemento) {
+  var tag = quizJevTag(elemento);
+  if (QUIZ_JEV_TAGS_VISUAIS.indexOf(tag) === -1) {
+    // Só fundo com ARQUIVO conta: degradê ou cor de contêiner não é figura, e
+    // aqui um falso positivo custaria um pedido de compartilhar a aba.
+    if (tag === "BODY" || tag === "HTML") return false;
+    var fundo = getComputedStyle(elemento).backgroundImage;
+    if (!fundo || fundo.indexOf("url(") === -1) return false;
+  }
   var r = elemento.getBoundingClientRect();
   return r.width >= QUIZ_JEV_TAMANHO_MINIMO_PX && r.height >= QUIZ_JEV_TAMANHO_MINIMO_PX;
 }
@@ -159,17 +186,12 @@ function quizJevEncontrarElementosVisuais(range) {
   if (raiz.nodeType !== Node.ELEMENT_NODE) raiz = raiz.parentElement;
   if (!raiz) return [];
   var candidatos = [];
-  if (
-    (raiz.tagName === "IMG" || raiz.tagName === "PICTURE" || raiz.tagName === "CANVAS") &&
-    quizJevElementoVisualRelevante(raiz) &&
-    range.intersectsNode(raiz)
-  ) {
-    candidatos.push(raiz);
-  }
-  var todos = raiz.querySelectorAll ? raiz.querySelectorAll("img, picture, canvas") : [];
+  // intersectsNode primeiro: é barato; getComputedStyle só pros que importam.
+  if (range.intersectsNode(raiz) && quizJevElementoVisualRelevante(raiz)) candidatos.push(raiz);
+  var todos = raiz.querySelectorAll ? raiz.querySelectorAll("*") : [];
   for (var i = 0; i < todos.length; i++) {
     var el2 = todos[i];
-    if (quizJevElementoVisualRelevante(el2) && range.intersectsNode(el2)) candidatos.push(el2);
+    if (range.intersectsNode(el2) && quizJevElementoVisualRelevante(el2)) candidatos.push(el2);
   }
   return candidatos;
 }
@@ -256,19 +278,458 @@ function quizJevObterBytes(elemento) {
   });
 }
 
-// Resolve a imagem da seleção: usa só o PRIMEIRO elemento visual encontrado
-// (a extensão empilha vários e costura print de tela — sem essa API aqui, o
-// bookmarklet fica no caso comum de uma figura por questão). Se não
-// conseguir os bytes, cai pro endereço absoluto (imageUrl) — o servidor
-// baixa por conta própria.
-function quizJevResolverImagem(visuais) {
-  var alvo = visuais[0];
-  return quizJevObterBytes(alvo).then(function (r) {
-    if (r) return { base64: r.base64, mime: r.mime };
-    var img = alvo.tagName === "IMG" ? alvo : alvo.querySelector && alvo.querySelector("img");
-    var src = img ? img.currentSrc || img.src : null;
-    return src ? { url: src } : null;
+// ---- Imagem a partir das fontes (<img>/<picture>/<canvas>) ----
+
+function quizJevLargura(imagem) {
+  return imagem.naturalWidth || imagem.width;
+}
+
+function quizJevAltura(imagem) {
+  return imagem.naturalHeight || imagem.height;
+}
+
+function quizJevBase64ParaBlob(base64, mime) {
+  var binario = atob(base64);
+  var bytes = new Uint8Array(binario.length);
+  for (var i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// createImageBitmap em vez de new Image(): não passa por `img-src` da CSP.
+function quizJevDecodificar(blob) {
+  if (typeof createImageBitmap === "function") return createImageBitmap(blob);
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(blob);
+    var img = new Image();
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error("falha ao decodificar imagem"));
+    };
+    img.src = url;
   });
+}
+
+function quizJevAplicarTetoDeLado(canvas) {
+  var maior = Math.max(canvas.width, canvas.height);
+  if (maior <= QUIZ_JEV_LIMITE_LADO_PX) return canvas;
+  var escala = QUIZ_JEV_LIMITE_LADO_PX / maior;
+  var menor = document.createElement("canvas");
+  menor.width = Math.max(1, Math.round(canvas.width * escala));
+  menor.height = Math.max(1, Math.round(canvas.height * escala));
+  menor.getContext("2d").drawImage(canvas, 0, 0, menor.width, menor.height);
+  return menor;
+}
+
+// Codifica respeitando o teto de bytes do servidor: PNG reduzindo a escala e,
+// se ainda assim não couber, JPEG (o servidor aceita; só ele comprime foto).
+function quizJevCanvasParaBase64ComLimite(original) {
+  var atual = original;
+  for (var tentativa = 0; tentativa < 6; tentativa++) {
+    var dataUrl = atual.toDataURL("image/png");
+    var base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    if (Math.ceil((base64.length * 3) / 4) <= QUIZ_JEV_LIMITE_BYTES) return { base64: base64, mime: "image/png" };
+    var menor = document.createElement("canvas");
+    menor.width = Math.max(1, Math.round(atual.width * 0.7));
+    menor.height = Math.max(1, Math.round(atual.height * 0.7));
+    menor.getContext("2d").drawImage(atual, 0, 0, menor.width, menor.height);
+    atual = menor;
+  }
+  var dataUrlJpeg = atual.toDataURL("image/jpeg", 0.85);
+  return { base64: dataUrlJpeg.slice(dataUrlJpeg.indexOf(",") + 1), mime: "image/jpeg" };
+}
+
+// Junta as imagens num canvas só, empilhadas na vertical, cada uma escalada
+// pra largura comum (a maior) sem perder a proporção.
+function quizJevEmpilhar(itens) {
+  return Promise.all(
+    itens.map(function (it) {
+      return quizJevDecodificar(quizJevBase64ParaBlob(it.base64, it.mime));
+    })
+  ).then(function (imgs) {
+    var largura = 0;
+    for (var i = 0; i < imgs.length; i++) largura = Math.max(largura, quizJevLargura(imgs[i]));
+    var alturas = imgs.map(function (im) {
+      return (quizJevAltura(im) * largura) / quizJevLargura(im);
+    });
+    var canvas = document.createElement("canvas");
+    canvas.width = largura;
+    canvas.height = Math.max(
+      1,
+      Math.round(
+        alturas.reduce(function (a, b) {
+          return a + b;
+        }, 0)
+      )
+    );
+    var ctx = canvas.getContext("2d");
+    var y = 0;
+    for (var j = 0; j < imgs.length; j++) {
+      ctx.drawImage(imgs[j], 0, y, largura, alturas[j]);
+      y += alturas[j];
+    }
+    return quizJevCanvasParaBase64ComLimite(quizJevAplicarTetoDeLado(canvas));
+  });
+}
+
+// Se QUALQUER imagem do conjunto falhar, desiste do conjunto: meia figura
+// (uma de duas lado a lado) induz a erro. Quem chama tenta o print da aba.
+function quizJevImagemDeFontes(elementos) {
+  var resultados = [];
+  return elementos
+    .reduce(function (cadeia, el) {
+      return cadeia.then(function (ok) {
+        if (!ok) return false;
+        return quizJevObterBytes(el).then(function (r) {
+          if (!r) return false;
+          resultados.push(r);
+          return true;
+        });
+      });
+    }, Promise.resolve(true))
+    .then(function (ok) {
+      if (!ok) return null;
+      // Uma imagem só e dentro do limite: manda o arquivo original, sem recodificar.
+      if (resultados.length === 1 && Math.ceil((resultados[0].base64.length * 3) / 4) <= QUIZ_JEV_LIMITE_BYTES) {
+        return resultados[0];
+      }
+      return quizJevEmpilhar(resultados);
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
+// ---- Print da aba (getDisplayMedia) ----
+//
+// O que a extensão faz com tabs.captureVisibleTab, o bookmarklet faz com a
+// captura de tela do navegador: não é governada por CSP e dá o mesmo resultado
+// (pixels da aba). O custo é o navegador pedir, uma vez, pra compartilhar a
+// aba. A captura fica aberta enquanto o card é usado (Alt+Q repetido não
+// pergunta de novo) e é solta sozinha depois de QUIZ_JEV_OCIOSIDADE_TELA_MS.
+// Só funciona em Chrome/Edge: Firefox não captura "esta aba", e aí o
+// bookmarklet segue só com as imagens que consegue ler da página.
+
+function quizJevFecharTela() {
+  clearTimeout(window.__quizJevTelaTimer);
+  var tela = window.__quizJevTela;
+  window.__quizJevTela = null;
+  if (!tela) return;
+  var faixas = tela.stream.getTracks();
+  for (var i = 0; i < faixas.length; i++) faixas[i].stop();
+  tela.video.srcObject = null;
+}
+
+function quizJevRenovarOciosidade() {
+  clearTimeout(window.__quizJevTelaTimer);
+  window.__quizJevTelaTimer = setTimeout(quizJevFecharTela, QUIZ_JEV_OCIOSIDADE_TELA_MS);
+}
+
+// Espera o próximo quadro do vídeo (ou `ms`, se a página estiver parada e o
+// navegador não gerar quadro novo).
+function quizJevEsperarQuadro(video, ms) {
+  return new Promise(function (resolve) {
+    var fim = false;
+    var limite = null;
+    function ok() {
+      if (fim) return;
+      fim = true;
+      clearTimeout(limite);
+      resolve();
+    }
+    limite = setTimeout(ok, ms);
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(ok);
+  });
+}
+
+// Dois rAF seguidos garantem que o navegador já pintou depois de uma rolagem;
+// a pausa curta cobre fonte/imagem lazy que pinta um quadro depois.
+function quizJevEsperarPintura() {
+  return new Promise(function (resolve) {
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        setTimeout(resolve, 60);
+      });
+    });
+  });
+}
+
+// Tem que ser chamada dentro do gesto do usuário (ou logo depois dele): o
+// navegador só abre o pedido de compartilhamento com ativação recente.
+// Resolve pra { stream, track, video } ou null (sem suporte, negado, ou o
+// usuário escolheu janela/tela em vez da aba). Nunca rejeita.
+function quizJevAbrirTela() {
+  var ativa = window.__quizJevTela;
+  if (ativa && ativa.track.readyState === "live") {
+    quizJevRenovarOciosidade();
+    return Promise.resolve(ativa);
+  }
+  var midia = navigator.mediaDevices;
+  if (!midia || !midia.getDisplayMedia) return Promise.resolve(null);
+  return midia
+    .getDisplayMedia({
+      video: { displaySurface: "browser" },
+      audio: false,
+      preferCurrentTab: true,
+      selfBrowserSurface: "include",
+      surfaceSwitching: "exclude",
+    })
+    .then(
+      function (stream) {
+        var faixa = stream.getVideoTracks()[0];
+        var configuracoes = faixa && faixa.getSettings ? faixa.getSettings() : {};
+        if (!faixa || !quizJevEhQuadroDeAba(configuracoes)) {
+          var todas = stream.getTracks();
+          for (var i = 0; i < todas.length; i++) todas[i].stop();
+          return null;
+        }
+        var video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        var tela = { stream: stream, track: faixa, video: video };
+        faixa.addEventListener("ended", function () {
+          if (window.__quizJevTela === tela) window.__quizJevTela = null;
+        });
+        window.__quizJevTela = tela;
+        return video
+          .play()
+          .then(function () {
+            return quizJevEsperarQuadro(video, 1500);
+          })
+          .then(function () {
+            quizJevRenovarOciosidade();
+            return tela;
+          });
+      },
+      function () {
+        return null;
+      }
+    )
+    .catch(function () {
+      return null;
+    });
+}
+
+// Copia o quadro atual do vídeo pra um canvas (null se ainda não há quadro).
+function quizJevTirarQuadro(tela) {
+  var video = tela.video;
+  if (!video.videoWidth || !video.videoHeight) return null;
+  var canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  return canvas;
+}
+
+// Quadro SEM o card do Quiz Jev na frente: esconde o card, espera a pintura e
+// o próximo quadro, copia e mostra o card de novo.
+function quizJevQuadroLimpo(tela) {
+  var host = document.getElementById(QUIZ_JEV_ID);
+  if (host) host.style.visibility = "hidden";
+  function mostrar() {
+    if (host) host.style.visibility = "visible";
+  }
+  return quizJevEsperarPintura()
+    .then(function () {
+      return quizJevEsperarQuadro(tela.video, 400);
+    })
+    .then(
+      function () {
+        var quadro = quizJevTirarQuadro(tela);
+        mostrar();
+        return quadro;
+      },
+      function (e) {
+        mostrar();
+        throw e;
+      }
+    );
+}
+
+// position:fixed/sticky "flutua" e apareceria repetido em cada faixa da costura.
+function quizJevOcultarFixos() {
+  if (!document.body) return [];
+  var todos = document.body.querySelectorAll("*");
+  if (todos.length > QUIZ_JEV_LIMITE_ELEMENTOS_FIXOS) return [];
+  var alterados = [];
+  for (var i = 0; i < todos.length; i++) {
+    var pos = getComputedStyle(todos[i]).position;
+    if (pos === "fixed" || pos === "sticky") {
+      alterados.push([todos[i], todos[i].style.visibility]);
+      todos[i].style.visibility = "hidden";
+    }
+  }
+  return alterados;
+}
+
+function quizJevRestaurarFixos(alterados) {
+  for (var i = 0; i < alterados.length; i++) alterados[i][0].style.visibility = alterados[i][1];
+}
+
+// Troca o texto do card durante as etapas da captura (card pode ser null: o
+// caminho "sem card" não tem o que atualizar).
+function quizJevEtapa(card, rect, texto) {
+  if (!card) return;
+  quizJevLimpar(card);
+  quizJevMontarCarregando(card, texto);
+  quizJevPosicionar(card, rect);
+}
+
+// Região (seleção + elementos visuais) em coordenadas de viewport, medida AGORA.
+function quizJevMedirUniao(visuais, range) {
+  var rects = [range.getBoundingClientRect()];
+  for (var i = 0; i < visuais.length; i++) rects.push(visuais[i].getBoundingClientRect());
+  return quizJevUniaoComFolga(rects, QUIZ_JEV_FOLGA_PX);
+}
+
+var QUIZ_JEV_COSTURAR = { costurar: true };
+
+// Tenta o caso comum: a região cabe na tela, um quadro só, recortado. Medida e
+// decisão acontecem DEPOIS do quadro limpo: o quadro de uma captura de aba muda
+// de tamanho quando o navegador mostra o aviso de compartilhamento (no Chrome,
+// a viewport encolhe uns 50 px), então qualquer medida anterior ao quadro pode
+// estar velha. Devolve QUIZ_JEV_COSTURAR se a região não couber.
+function quizJevPrintUnico(tela, visuais, range, rect, card) {
+  quizJevEtapa(card, rect, "Capturando a tela…");
+  return quizJevQuadroLimpo(tela).then(function (quadro) {
+    if (!quadro) return null;
+    var uniao = quizJevMedirUniao(visuais, range);
+    var area = quizJevAreaVisivel(quadro.width, quadro.height, window.innerWidth, window.innerHeight);
+    if (!quizJevCabeNaViewport(uniao, area.largura, area.altura)) return QUIZ_JEV_COSTURAR;
+    var escala = quizJevEscalaDoQuadro(quadro.width, window.innerWidth);
+    var rec = quizJevRecorteNoQuadro(uniao, escala, quadro.width, quadro.height);
+    if (!rec) return null;
+    var canvas = document.createElement("canvas");
+    canvas.width = rec.sw;
+    canvas.height = rec.sh;
+    canvas.getContext("2d").drawImage(quadro, rec.sx, rec.sy, rec.sw, rec.sh, 0, 0, rec.sw, rec.sh);
+    return quizJevCanvasParaBase64ComLimite(quizJevAplicarTetoDeLado(canvas));
+  });
+}
+
+// A região não cabe (ou está fora da tela): rola de cima pra baixo, um quadro
+// por vez, e costura. Cada faixa começa ONDE O QUADRO ANTERIOR TERMINOU (a
+// altura é medida a cada quadro, porque ela pode mudar no meio do caminho —
+// ver quizJevPrintUnico); assim não sobra vão entre as faixas. Só costura na
+// vertical: o que passar da largura da tela fica de fora. Restaura rolagem e
+// elementos fixos em QUALQUER saída.
+function quizJevPrintCosturado(tela, visuais, range, rect, card, aindaAberto) {
+  var regiaoDoc = quizJevRegiaoParaDocumento(quizJevMedirUniao(visuais, range), window.scrollX, window.scrollY);
+  var scrollX0 = window.scrollX;
+  var scrollY0 = window.scrollY;
+  var fixos = quizJevOcultarFixos();
+  var quadros = [];
+  var posicoes = [];
+
+  function restaurar() {
+    quizJevRestaurarFixos(fixos);
+    window.scrollTo(scrollX0, scrollY0);
+  }
+
+  // `y`: topo (em coordenadas de documento) da próxima faixa. Devolve true se
+  // a região inteira foi coberta.
+  function proxima(y) {
+    if (y >= regiaoDoc.bottom) return Promise.resolve(true);
+    // Teto de segurança: uma "região" de dezenas de telas não é uma questão.
+    if (!aindaAberto() || quadros.length >= 30) return Promise.resolve(false);
+    quizJevEtapa(card, rect, "Capturando a figura (" + (quadros.length + 1) + ")…");
+    // Deixa o texto do card pintar antes de escondê-lo e rolar.
+    return quizJevEsperarPintura()
+      .then(function () {
+        window.scrollTo(scrollX0, y);
+        return quizJevQuadroLimpo(tela);
+      })
+      .then(function (quadro) {
+        if (!quadro) return false;
+        var area = quizJevAreaVisivel(quadro.width, quadro.height, window.innerWidth, window.innerHeight);
+        var yReal = window.scrollY;
+        quadros.push(quadro);
+        posicoes.push({ x: window.scrollX, y: yReal, largura: quadro.width, altura: quadro.height });
+        // Rolagem barrada no fim da página: este quadro já vai até o fim.
+        if (yReal < y - 1) return true;
+        return proxima(yReal + area.altura);
+      });
+  }
+
+  return proxima(regiaoDoc.top).then(
+    function (ok) {
+      restaurar();
+      if (!ok || !quadros.length) return null;
+      quizJevEtapa(card, rect, "Costurando a imagem…");
+      var escala = quizJevEscalaDoQuadro(quadros[0].width, window.innerWidth);
+      var plano = quizJevPlanoDeCostura(posicoes, regiaoDoc, escala, QUIZ_JEV_LIMITE_LADO_PX);
+      var canvas = document.createElement("canvas");
+      canvas.width = plano.largura;
+      canvas.height = plano.altura;
+      var ctx = canvas.getContext("2d");
+      for (var i = 0; i < quadros.length; i++) {
+        var it = plano.itens[i];
+        ctx.drawImage(quadros[i], 0, 0, quadros[i].width, quadros[i].height, it.dx, it.dy, it.dw, it.dh);
+      }
+      return quizJevCanvasParaBase64ComLimite(canvas);
+    },
+    function (e) {
+      restaurar();
+      throw e;
+    }
+  );
+}
+
+function quizJevCapturarDaTela(visuais, range, rect, card, aindaAberto) {
+  quizJevEtapa(card, rect, "Permita compartilhar a aba…");
+  return quizJevAbrirTela()
+    .then(function (tela) {
+      if (!tela || !aindaAberto()) return null;
+      return quizJevPrintUnico(tela, visuais, range, rect, card).then(function (r) {
+        if (r !== QUIZ_JEV_COSTURAR) return r;
+        return aindaAberto() ? quizJevPrintCosturado(tela, visuais, range, rect, card, aindaAberto) : null;
+      });
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
+function quizJevTemBytesDiretos(elemento) {
+  return QUIZ_JEV_TAGS_COM_BYTES.indexOf(quizJevTag(elemento)) !== -1;
+}
+
+// Resolve a imagem da seleção, na ordem: (1) bytes das fontes (<img>/
+// <picture>/<canvas>) — todas empilhadas, só quando TODO elemento visual da
+// seleção é desse tipo; (2) print da aba (tabela, SVG, fórmula, vídeo, fundo
+// com arquivo, ou quando (1) falhou); (3) o endereço da primeira <img>, que o
+// servidor baixa por conta própria. Devolve {base64,mime}, {url} ou null —
+// nunca lança. `aindaAberto()` diz se o card ainda é o da seleção atual.
+function quizJevResolverImagem(visuais, range, rect, card, aindaAberto) {
+  var fontes = visuais.filter(quizJevTemBytesDiretos);
+  var soFontes = fontes.length === visuais.length;
+  var passoFontes = Promise.resolve(null);
+  if (soFontes) {
+    quizJevEtapa(card, rect, "Lendo a imagem…");
+    passoFontes = quizJevImagemDeFontes(fontes);
+  }
+  return passoFontes
+    .then(function (r) {
+      if (r || !aindaAberto()) return r;
+      return quizJevCapturarDaTela(visuais, range, rect, card, aindaAberto);
+    })
+    .then(function (r) {
+      if (r || !aindaAberto()) return r;
+      for (var i = 0; i < visuais.length; i++) {
+        var el = visuais[i];
+        var img = quizJevTag(el) === "IMG" ? el : el.querySelector && el.querySelector("img");
+        var src = img ? img.currentSrc || img.src : null;
+        if (src) return { url: src };
+      }
+      return null;
+    })
+    .catch(function () {
+      return null;
+    });
 }
 
 // ---- Chamada à API ----
@@ -615,7 +1076,10 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
   quizJevCtxAtual = contexto;
 
   var visuais = quizJevEncontrarElementosVisuais(range);
-  var pImagem = visuais.length ? quizJevResolverImagem(visuais) : Promise.resolve(null);
+  var aindaAberto = function () {
+    return quizJevAindaAberto(contexto);
+  };
+  var pImagem = visuais.length ? quizJevResolverImagem(visuais, range, rect, card, aindaAberto) : Promise.resolve(null);
 
   pImagem.then(function (img) {
     if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== contexto) return;
@@ -646,7 +1110,12 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
 
 function quizJevProcessarSemCard(raw, range, janela) {
   var visuais = quizJevEncontrarElementosVisuais(range);
-  var pImagem = visuais.length ? quizJevResolverImagem(visuais) : Promise.resolve(null);
+  // Sem card não há o que fechar no meio: o resolvedor roda até o fim.
+  var pImagem = visuais.length
+    ? quizJevResolverImagem(visuais, range, range.getBoundingClientRect(), null, function () {
+        return true;
+      })
+    : Promise.resolve(null);
   var payloadPromise = pImagem.then(function (img) {
     var payload = { raw: raw };
     if (img && img.base64) {

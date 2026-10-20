@@ -139,7 +139,33 @@
       <li>Clique no favorito <strong>Quiz Jev</strong> na barra de favoritos.</li>
       <li>Um cartão aparece com a resposta. Se o site bloquear a chamada direta, uma janelinha abre por um instante, faz a consulta e se fecha — a resposta aparece no mesmo cartão. Se o navegador barrar essa janela, um botão “Consultar pela janela” aparece no cartão.</li>
       <li>Enquanto não recarregar a página, <kbd>Alt+Q</kbd> repete o processo numa seleção nova sem precisar clicar no favorito de novo, e <kbd>Alt+Shift+Q</kbd> abre direto uma pergunta livre.</li>
+      <li>Se a seleção tiver <strong>tabela, gráfico, figura em SVG, fórmula ou vídeo</strong>, o favorito manda também uma imagem da questão. Pra isso o Chrome/Edge pergunta, uma vez, se pode <em>compartilhar esta aba</em> — permita (ele só fotografa a região selecionada e solta o compartilhamento sozinho depois de uns minutos sem uso). Imagens comuns (<code class="inline">&lt;img&gt;</code>) saem direto, sem pergunta; no Firefox/Zen, que não compartilham a aba atual, só elas funcionam.</li>
     </ol>
+  </div>
+
+  <div class="card">
+    <h2>4. Atalho de teclado (sem usar o mouse)</h2>
+    <p class="aviso-arrastar">
+      Depois do primeiro uso numa página, <kbd>Alt+Q</kbd> e <kbd>Alt+Shift+Q</kbd> já funcionam. Pra dar o
+      <em>primeiro</em> uso também pelo teclado, o navegador precisa chamar o favorito por você:
+    </p>
+    <ul>
+      <li>
+        <strong>Chrome / Edge:</strong> arraste o favorito para a <strong>primeira posição</strong> da barra de favoritos.
+        Aí, em qualquer página, aperte <kbd>Alt+Shift+B</kbd> (foca a barra de favoritos) e <kbd>Enter</kbd> — o favorito
+        roda na seleção atual.
+      </li>
+      <li>
+        <strong>Firefox / Zen:</strong> abra a Biblioteca (<kbd>Ctrl+Shift+O</kbd>), selecione o favorito e preencha o
+        campo <em>Palavra-chave</em> com, por exemplo, <code class="inline">qj</code>. Daí em diante:
+        <kbd>Ctrl+L</kbd>, digite <code class="inline">qj</code> e <kbd>Enter</kbd>.
+      </li>
+    </ul>
+    <p class="aviso-arrastar">
+      Sem nenhum desses passos o primeiro uso exige o clique — um favorito não consegue registrar atalho por conta
+      própria antes de rodar. Quem quer o atalho global em qualquer aba, sem clique nenhum, usa a
+      <a href="https://github.com/guilhermeb-ferrarezi/quiz-jev#extensão-de-navegador">extensão</a>.
+    </p>
   </div>
 
   <footer>
@@ -208,7 +234,12 @@
     // letras/números/_/- — não há aspas nem barra invertida na chave pra
     // escapar.
     var codigo = template.split("__QUIZ_KEY__").join(chave);
-    var url = "javascript:" + encodeURIComponent(codigo);
+    // encodeURI (+ o "#", que ele deixa passar e viraria fragmento) em vez de
+    // encodeURIComponent: o código cresceu com a captura de aba e, codificado
+    // por inteiro, o link passaria dos ~64 KB que alguns navegadores aceitam
+    // num favorito. ( ) [ ] ' ; , : / ? & = + continuam literais — dentro de um
+    // "javascript:" são só JS; "%" vira %25 e volta igual.
+    var url = "javascript:" + encodeURI(codigo).replace(/#/g, "%23");
 
     linkBookmarklet.setAttribute("href", url);
     codigoBookmarklet.value = url;
