@@ -91,10 +91,64 @@ function quizJevAoTeclar(e) {
   }
 }
 
+// Clicar na página (pra selecionar as alternativas, por exemplo) RECOLHE o card
+// numa pastilha em vez de fechá-lo: a resposta não se perde e dá pra mostrar de
+// novo (clique na pastilha, `Alt+W` ou o botão +).
 function quizJevAoClicar(e) {
   if (window.__quizJevSimulando) return;
   var host = document.getElementById(QUIZ_JEV_ID);
-  if (host && (!e.composedPath || e.composedPath().indexOf(host) === -1)) quizJevFechar();
+  if (!host || (e.composedPath && e.composedPath().indexOf(host) !== -1)) return;
+  var card = host.shadowRoot && host.shadowRoot.querySelector(".card");
+  if (card) quizJevMinimizar(card);
+}
+
+function quizJevAtualizarMini(card, resumo) {
+  var mini = card.querySelector(".mini");
+  if (mini) mini.textContent = resumo ? "Quiz Jev · " + resumo : "Quiz Jev";
+}
+
+function quizJevMinimizar(card) {
+  card.classList.add("minimizado");
+  var botao = card.querySelector(".ctl .alternar");
+  if (botao) {
+    botao.textContent = "+";
+    botao.title = "Mostrar";
+    botao.setAttribute("aria-label", "Mostrar");
+  }
+}
+
+function quizJevMostrar(card) {
+  card.classList.remove("minimizado");
+  var botao = card.querySelector(".ctl .alternar");
+  if (botao) {
+    botao.textContent = "−";
+    botao.title = "Esconder";
+    botao.setAttribute("aria-label", "Esconder");
+  }
+}
+
+// Esconde o card se está à mostra e mostra se está recolhido (Alt+W).
+function quizJevAlternarCard() {
+  var host = document.getElementById(QUIZ_JEV_ID);
+  var card = host && host.shadowRoot && host.shadowRoot.querySelector(".card");
+  if (!card) return;
+  if (card.classList.contains("minimizado")) quizJevMostrar(card);
+  else quizJevMinimizar(card);
+}
+
+function quizJevBotaoDoCard(texto, titulo, classe, aoClicar) {
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = classe;
+  b.textContent = texto;
+  b.title = titulo;
+  b.setAttribute("aria-label", titulo);
+  b.addEventListener("click", function (e) {
+    // Não deixa o clique chegar ao card (que reabre quando está recolhido).
+    e.stopPropagation();
+    aoClicar();
+  });
+  return b;
 }
 
 function quizJevPosicionar(card, rect) {
@@ -140,7 +194,23 @@ function quizJevCriarCard(rect) {
     shadow.appendChild(style);
   }
   var card = document.createElement("div");
-  card.className = "card";
+  card.className = "card com-ctl";
+  // Controles (esconder/fechar) e a pastilha de texto do card recolhido. Ficam no
+  // card pra sempre: quizJevLimpar não os apaga.
+  var ctl = document.createElement("div");
+  ctl.className = "ctl";
+  ctl.appendChild(quizJevEl("span", "mini", "Quiz Jev"));
+  ctl.appendChild(
+    quizJevBotaoDoCard("−", "Esconder", "alternar", function () {
+      quizJevAlternarCard();
+    })
+  );
+  ctl.appendChild(quizJevBotaoDoCard("×", "Fechar", "fechar", quizJevFechar));
+  card.appendChild(ctl);
+  // Recolhido, o card inteiro é a pastilha: clicar nela mostra de novo.
+  card.addEventListener("click", function () {
+    if (card.classList.contains("minimizado")) quizJevMostrar(card);
+  });
   shadow.appendChild(card);
   document.body.appendChild(host);
   quizJevPosicionar(card, rect);
@@ -1239,6 +1309,7 @@ function quizJevAcompanhar(consulta, ctx, payload, comImagem, imagemFalhou, depo
       if (!quizJevAindaAberto(ctx)) return;
       quizJevLimpar(card);
       quizJevMontarResposta(card, data, comImagem, imagemFalhou);
+      quizJevAtualizarMini(card, quizJevResumoDaResposta(data));
       quizJevPosicionar(card, ctx.rect);
     },
     function (e) {
@@ -1250,6 +1321,7 @@ function quizJevAcompanhar(consulta, ctx, payload, comImagem, imagemFalhou, depo
       }
       quizJevLimpar(card);
       quizJevMontarErro(card, e && e.message);
+      quizJevAtualizarMini(card, "erro");
       quizJevPosicionar(card, ctx.rect);
     }
   );
@@ -1588,6 +1660,14 @@ if (!window.__quizJevBookmarklet) {
     function (e) {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       var tecla = (e.key || "").toLowerCase();
+      // Alt+W: esconde o card (vira pastilha) ou mostra de novo.
+      if (tecla === "w" && !e.shiftKey) {
+        if (document.getElementById(QUIZ_JEV_ID)) {
+          e.preventDefault();
+          quizJevAlternarCard();
+        }
+        return;
+      }
       if (tecla !== "q") return;
       e.preventDefault();
       if (e.shiftKey) quizJevProcessarPerguntaDireta();

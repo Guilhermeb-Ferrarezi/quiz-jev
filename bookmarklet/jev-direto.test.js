@@ -2,7 +2,20 @@
 //   bun test bookmarklet/jev-direto.test.js
 import { test, expect } from "bun:test";
 
-const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento } = require("./jev-direto.js");
+const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento, quizJevResumoDaResposta } = require("./jev-direto.js");
+
+// ---- Resumo da resposta (texto da pastilha com o card recolhido) ----
+
+test("resumo da resposta: o que aparece na pastilha quando o card está recolhido", () => {
+  expect(quizJevResumoDaResposta({ kind: "unica", answer: "B" })).toBe("B");
+  expect(quizJevResumoDaResposta({ kind: "multipla", answers: ["A", "C"] })).toBe("A · C");
+  expect(quizJevResumoDaResposta({ kind: "multipla", answers: [] })).toBe("—");
+  expect(quizJevResumoDaResposta({ kind: "julgamento", itens: [{ certo: false }, { certo: false }, { certo: true }, { certo: true }] })).toBe("✗ ✗ ✓ ✓");
+  expect(quizJevResumoDaResposta({ kind: "lacunas", itens: [{}, {}, {}, {}] })).toBe("4 lacunas");
+  expect(quizJevResumoDaResposta({ kind: "lacunas", itens: [{}] })).toBe("1 lacuna");
+  expect(quizJevResumoDaResposta({ kind: "aberta", answer: "", answerText: "texto" })).toBe("resposta");
+  expect(quizJevResumoDaResposta(null)).toBe("");
+});
 
 // ---- Lacunas com dropdown ----
 

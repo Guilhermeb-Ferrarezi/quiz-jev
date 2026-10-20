@@ -328,6 +328,20 @@ function quizJevInterpretarRespostaJev(bruto, opcoes, generico, julgamento, lacu
   };
 }
 
+// Texto curto da resposta, pra pastilha do card recolhido ("Quiz Jev · B"). Serve
+// aos dois modos (api-go e Jev): conhece todos os tipos de resposta do card.
+function quizJevResumoDaResposta(d) {
+  if (!d) return "";
+  if (d.kind === "julgamento") {
+    var marcas = [];
+    for (var i = 0; i < d.itens.length; i++) marcas.push(d.itens[i].certo ? "✓" : "✗");
+    return marcas.join(" ");
+  }
+  if (d.kind === "lacunas") return d.itens.length + (d.itens.length === 1 ? " lacuna" : " lacunas");
+  if (d.kind === "multipla") return d.answers && d.answers.length ? d.answers.join(" · ") : "—";
+  return d.answer ? d.answer : "resposta";
+}
+
 function quizJevMensagemHttpJev(status) {
   if (status === 401 || status === 403) return "A chave do Jev foi recusada. Confira se ela está correta.";
   if (status === 402 || status === 429) return "A conta do Jev está sem saldo ou atingiu o limite de uso.";
@@ -339,6 +353,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     quizJevSepararQuestao: quizJevSepararQuestao,
     quizJevDetectarJulgamento: quizJevDetectarJulgamento,
+    quizJevResumoDaResposta: quizJevResumoDaResposta,
     quizJevMontarPedidoJev: quizJevMontarPedidoJev,
     quizJevInterpretarRespostaJev: quizJevInterpretarRespostaJev,
     quizJevMensagemHttpJev: quizJevMensagemHttpJev,

@@ -125,6 +125,12 @@ e cole o endereço que ele imprimir no campo "Endereço do proxy" da página. A
 chave do Jev fica **dentro do favorito** (quem tiver acesso ao seu navegador a
 enxerga): use uma chave com limite de gasto.
 
+**Esconder e mostrar o card.** Clicar na página (para selecionar as alternativas,
+por exemplo) **recolhe** o card numa pastilha (`Quiz Jev · B`, ou `✗ ✗ ✓ ✓` nas
+afirmativas, `4 lacunas` nas lacunas) em vez de fechá-lo: a resposta não se
+perde. Clique na pastilha, no `+` ou `Alt+W` para mostrar de novo; `−`/`Alt+W`
+recolhem na hora; `×` ou `Esc` fecham de vez. Um novo `Alt+Q` substitui o card.
+
 **Lacunas com dropdown.** Em questões de completar lacunas escolhendo numa lista,
 o favorito acha os dropdowns dentro da seleção (`<select>` nativo ou o padrão
 `role="combobox"` + `aria-haspopup="listbox"` do MUI e parecidos), marca a posição

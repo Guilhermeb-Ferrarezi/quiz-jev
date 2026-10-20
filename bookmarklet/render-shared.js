@@ -56,6 +56,16 @@ var QUIZ_JEV_CSS = [
   ".veredito.errado { background: #fee2e2; color: #991b1b; }",
   ".veredito.incerto { outline: 1px dashed currentColor; outline-offset: 1px; }",
   ".julga-pct { flex: 0 0 auto; font-size: 11px; color: #71717a; }",
+  ".ctl { position: absolute; top: 3px; right: 5px; display: flex; align-items: center; gap: 2px; z-index: 3; }",
+  ".ctl button { all: unset; cursor: pointer; width: 20px; height: 20px; border-radius: 5px; text-align: center; font: 700 15px/20px system-ui, sans-serif; color: #71717a; }",
+  ".ctl button:hover { background: #f4f4f5; color: #18181b; }",
+  ".ctl button:focus-visible { outline: 2px solid #2563eb; }",
+  ".mini { display: none; font-size: 12px; font-weight: 600; margin-right: 4px; white-space: nowrap; }",
+  ".card.com-ctl { padding-top: 22px; }",
+  ".card.minimizado { padding: 2px 6px 2px 10px; display: flex; align-items: center; min-height: 0; overflow: hidden; cursor: pointer; }",
+  ".card.minimizado > :not(.ctl) { display: none !important; }",
+  ".card.minimizado .ctl { position: static; }",
+  ".card.minimizado .mini { display: inline; }",
   ".lacuna-escolha { flex: 1; font-weight: 600; }",
   ".lacuna-escolha.incerto { text-decoration: underline dashed; text-underline-offset: 3px; }",
   ".barras { margin-top: 10px; display: grid; gap: 3px; }",
@@ -79,7 +89,7 @@ var QUIZ_JEV_CSS = [
   ".pergunta-dica { margin-top: 6px; font-size: 11px; color: #a1a1aa; }",
   ".botao-relay { margin-top: 10px; display: inline-block; font: inherit; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 7px; border: 1px solid #2563eb; background: #eff6ff; color: #1d4ed8; cursor: pointer; }",
   ".botao-relay:hover { background: #dbeafe; }",
-  "@media (prefers-color-scheme: dark) { .card { background: #18181b; color: #fafafa; border-color: #3f3f46; } .motivo { color: #d4d4d8; } .badge { background: #3f3f46; color: #e4e4e7; } .badge.claude { background: #4c1d95; color: #ddd6fe; } .badge.imagem { background: #14532d; color: #bbf7d0; } .opcao-texto { color: #d4d4d8; } .veredito.certo { background: #14532d; color: #bbf7d0; } .veredito.errado { background: #7f1d1d; color: #fecaca; } .julga-pct { color: #a1a1aa; } .carregando { color: #60a5fa; } .card.carregando-ativo::after { box-shadow: inset 0 0 0 1.5px rgba(96,165,250,.9), 0 0 16px rgba(96,165,250,.35); } .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); } .progresso { background: #3f3f46; } .dica { border-color: #3f3f46; } .dica kbd { background: #27272a; border-color: #3f3f46; color: #d4d4d8; } .pergunta-label { color: #d4d4d8; } .pergunta-input { background: #27272a; border-color: #3f3f46; color: #fafafa; } .botao-relay { background: #1e293b; border-color: #60a5fa; color: #93c5fd; } .botao-relay:hover { background: #1e3a5f; } }",
+  "@media (prefers-color-scheme: dark) { .card { background: #18181b; color: #fafafa; border-color: #3f3f46; } .motivo { color: #d4d4d8; } .badge { background: #3f3f46; color: #e4e4e7; } .badge.claude { background: #4c1d95; color: #ddd6fe; } .badge.imagem { background: #14532d; color: #bbf7d0; } .opcao-texto { color: #d4d4d8; } .ctl button { color: #a1a1aa; } .ctl button:hover { background: #27272a; color: #fafafa; } .veredito.certo { background: #14532d; color: #bbf7d0; } .veredito.errado { background: #7f1d1d; color: #fecaca; } .julga-pct { color: #a1a1aa; } .carregando { color: #60a5fa; } .card.carregando-ativo::after { box-shadow: inset 0 0 0 1.5px rgba(96,165,250,.9), 0 0 16px rgba(96,165,250,.35); } .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); } .progresso { background: #3f3f46; } .dica { border-color: #3f3f46; } .dica kbd { background: #27272a; border-color: #3f3f46; color: #d4d4d8; } .pergunta-label { color: #d4d4d8; } .pergunta-input { background: #27272a; border-color: #3f3f46; color: #fafafa; } .botao-relay { background: #1e293b; border-color: #60a5fa; color: #93c5fd; } .botao-relay:hover { background: #1e3a5f; } }",
   "@media (prefers-reduced-motion: reduce) { .card, .card.fechando, .card.erro-anim, .letra-pop, .letra-item, .item-cascata { animation: none !important; } .card.carregando-ativo::before { animation: none !important; opacity: 0; } .pontos i, .card.carregando-ativo::after { animation: none !important; } .barra i, .progresso i { transition: none !important; } }"
 ].join("\n");
 
@@ -92,8 +102,15 @@ function quizJevEl(tag, className, texto) {
   return n;
 }
 
+// Esvazia o card, menos os controles (esconder/fechar: `.ctl`), que o bookmarklet
+// põe uma vez e valem pra todos os estados. Na janela de ponte e no app não há `.ctl`.
 function quizJevLimpar(card) {
-  while (card.firstChild) card.removeChild(card.firstChild);
+  var filho = card.firstChild;
+  while (filho) {
+    var proximo = filho.nextSibling;
+    if (!(filho.classList && filho.classList.contains("ctl"))) card.removeChild(filho);
+    filho = proximo;
+  }
 }
 
 function quizJevBarras(probs, escolhidas) {

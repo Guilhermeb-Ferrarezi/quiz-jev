@@ -554,6 +554,52 @@ try {
   }
   conferir(jSel.card?.numeros?.length === 2, "o card lista as 2 lacunas");
 
+  console.log("card recolhível: clicar na página recolhe (não fecha), pastilha reabre, Alt+W alterna, − esconde, × fecha");
+  const etapas = {};
+  const expr = (corpo) => `(() => { const h = document.getElementById("__quiz-jev-bookmarklet"); if (!h) return null; const c = h.shadowRoot.querySelector(".card"); return (${corpo})(c, h); })()`;
+  const ler = async (cdp, corpo) => (await cdp.enviar("Runtime.evaluate", { expression: expr(corpo), returnByValue: true })).result.value;
+  const clicarEm = async (cdp, x, y) => {
+    await cdp.enviar("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await cdp.enviar("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await cdp.enviar("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    await Bun.sleep(250);
+  };
+  const estado = (cdp) => ler(cdp, `(c) => ({ recolhido: c.classList.contains("minimizado"), altura: Math.round(c.getBoundingClientRect().height), mini: c.querySelector(".mini").textContent, letraVisivel: !!c.querySelector(".letra") && c.querySelector(".letra").offsetHeight > 0, botao: c.querySelector(".alternar").textContent })`);
+  await cenario("jev-card-recolhivel", "/texto", {
+    modo: "jev",
+    aposRodar: async (cdp) => {
+      for (let i = 0; i < 80 && !(await ler(cdp, `(c) => !!c.querySelector(".letra")`)); i++) await Bun.sleep(100);
+      await Bun.sleep(700);
+      etapas.inicio = await estado(cdp);
+      fs.writeFileSync(path.join(SAIDA, "jev-card-expandido.png"), Buffer.from((await cdp.enviar("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: 520, height: 330, scale: 1 } })).data, "base64"));
+      await clicarEm(cdp, 800, 600); // clique na página, longe do card (como ao selecionar as alternativas)
+      etapas.aposClique = await estado(cdp);
+      fs.writeFileSync(path.join(SAIDA, "jev-card-recolhido.png"), Buffer.from((await cdp.enviar("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: 520, height: 330, scale: 1 } })).data, "base64"));
+      const r = await ler(cdp, `(c) => { const b = c.getBoundingClientRect(); return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; }`);
+      await clicarEm(cdp, r[0], r[1]); // clique na pastilha
+      etapas.aposPastilha = await estado(cdp);
+      const alt = (tecla) => cdp.enviar("Runtime.evaluate", { expression: `document.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(tecla)}, altKey: true, bubbles: true, cancelable: true })); 1` });
+      await alt("w");
+      etapas.aposAltW1 = await estado(cdp);
+      await alt("w");
+      etapas.aposAltW2 = await estado(cdp);
+      await ler(cdp, `(c) => c.querySelector(".alternar").click()`);
+      etapas.aposBotaoMenos = await estado(cdp);
+      await ler(cdp, `(c) => c.querySelector(".alternar").click()`);
+      etapas.aposBotaoMais = await estado(cdp);
+      await ler(cdp, `(c) => c.querySelector(".fechar").click()`);
+      await Bun.sleep(500);
+      etapas.aposFechar = await ler(cdp, `(c) => 1`);
+    },
+  });
+  conferir(etapas.inicio && !etapas.inicio.recolhido && etapas.inicio.letraVisivel, `a resposta aparece (${JSON.stringify(etapas.inicio)})`);
+  conferir(etapas.aposClique?.recolhido === true && etapas.aposClique.altura < 60, `clicar na página recolhe o card em vez de fechar (altura ${etapas.aposClique?.altura}px)`);
+  conferir(etapas.aposClique?.mini === "Quiz Jev · B", `a pastilha mostra a resposta (${JSON.stringify(etapas.aposClique?.mini)})`);
+  conferir(etapas.aposPastilha?.recolhido === false && etapas.aposPastilha.letraVisivel, "clicar na pastilha mostra o card de novo");
+  conferir(etapas.aposAltW1?.recolhido === true && etapas.aposAltW2?.recolhido === false, "Alt+W esconde e mostra");
+  conferir(etapas.aposBotaoMenos?.recolhido === true && etapas.aposBotaoMenos.botao === "+" && etapas.aposBotaoMais?.recolhido === false && etapas.aposBotaoMais.botao === "−", "o botão alterna entre − e +");
+  conferir(etapas.aposFechar === null, "o botão × fecha o card de vez");
+
   console.log("chave recusada (401): mensagem clara no card");
   const jRuim = await cenario("jev-chave-ruim", "/texto", { modo: "jev", chave: "apikey_errada_" + "y".repeat(30) });
   conferir(jRuim.enviou && /chave do Jev foi recusada/i.test(jRuim.card?.erro || ""), `card: ${JSON.stringify(jRuim.card?.erro)}`);
