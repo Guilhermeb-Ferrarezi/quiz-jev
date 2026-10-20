@@ -79,6 +79,8 @@ function quizJevFechar() {
 }
 
 function quizJevAoTeclar(e) {
+  // Eventos que o próprio favorito simula (abrir/fechar dropdown) não são do usuário.
+  if (window.__quizJevSimulando) return;
   if (e.key === "Escape") {
     quizJevFechar();
     return;
@@ -90,6 +92,7 @@ function quizJevAoTeclar(e) {
 }
 
 function quizJevAoClicar(e) {
+  if (window.__quizJevSimulando) return;
   var host = document.getElementById(QUIZ_JEV_ID);
   if (host && (!e.composedPath || e.composedPath().indexOf(host) === -1)) quizJevFechar();
 }
@@ -699,6 +702,176 @@ function quizJevCapturarDaTela(visuais, range, rect, card, aindaAberto) {
     });
 }
 
+// ---- Modo Jev: lacunas com dropdown ----
+//
+// Questões de completar lacunas escolhendo numa lista (dropdown). Os dropdowns
+// de uma biblioteca como o MUI são <div role="combobox" aria-haspopup="listbox"
+// aria-controls="ID">, e a lista de opções (<ul role="listbox" id="ID">) só
+// existe na página ENQUANTO o dropdown está aberto, num portal fora da questão.
+// Então: acha as lacunas dentro da seleção, marca a posição de cada uma no texto
+// ([1], [2]…), e para ler as opções abre cada dropdown (mousedown, como a
+// biblioteca espera), lê a lista e fecha com Esc SEM escolher nada.
+
+function quizJevEncontrarLacunas(range) {
+  var raiz = range.commonAncestorContainer;
+  if (raiz.nodeType !== Node.ELEMENT_NODE) raiz = raiz.parentElement;
+  if (!raiz || !raiz.querySelectorAll) return [];
+  var todas = raiz.querySelectorAll('[role="combobox"][aria-haspopup="listbox"], select');
+  var achadas = [];
+  for (var i = 0; i < todas.length; i++) if (range.intersectsNode(todas[i])) achadas.push(todas[i]);
+  return achadas;
+}
+
+var QUIZ_JEV_TAGS_BLOCO = ["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "UL", "OL", "TABLE", "TR", "SECTION", "ARTICLE", "BLOCKQUOTE"];
+
+// Texto da seleção com " [n] " no lugar de cada dropdown e quebra de linha nos
+// blocos (selection.toString() traz as quebras, mas não as lacunas). Devolve
+// {texto, total}: `total` tem que bater com o número de lacunas achadas.
+function quizJevTextoComLacunas(range) {
+  var saida = [];
+  var total = 0;
+  function andar(no) {
+    if (no.nodeType === Node.TEXT_NODE) {
+      // Em HTML, quebra de linha dentro de um trecho de texto vale um espaço; as
+      // quebras de verdade vêm dos blocos e dos <br> (abaixo).
+      saida.push(no.nodeValue.replace(/\s+/g, " "));
+      return;
+    }
+    if (no.nodeType !== Node.ELEMENT_NODE && no.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return;
+    var tag = quizJevTag(no);
+    if (tag === "BR") {
+      saida.push("\n");
+      return;
+    }
+    if (tag === "SELECT" || (no.getAttribute && no.getAttribute("role") === "combobox" && no.getAttribute("aria-haspopup") === "listbox")) {
+      total++;
+      saida.push(" [" + total + "] ");
+      return;
+    }
+    var bloco = QUIZ_JEV_TAGS_BLOCO.indexOf(tag) !== -1;
+    if (bloco) saida.push("\n");
+    for (var c = no.firstChild; c; c = c.nextSibling) andar(c);
+    if (bloco) saida.push("\n");
+  }
+  andar(range.cloneContents());
+  // O <div> que envolve cada dropdown conta como bloco e deixaria o marcador sozinho
+  // numa linha ("O\n[1]\né usado"): junta o marcador à frase onde ele está.
+  var texto = saida
+    .join("")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?(\[\d+\]) ?\n ?/g, " $1 ");
+  return { texto: texto, total: total };
+}
+
+// Espera `condicao()` ficar verdadeira (consulta a cada 40 ms) até `ms`; resolve
+// com o valor verdadeiro, ou null no tempo esgotado.
+function quizJevEsperarAte(condicao, ms) {
+  return new Promise(function (resolve) {
+    var inicio = Date.now();
+    (function olhar() {
+      var v = condicao();
+      if (v) return resolve(v);
+      if (Date.now() - inicio >= ms) return resolve(null);
+      setTimeout(olhar, 40);
+    })();
+  });
+}
+
+function quizJevTextosDasOpcoes(lista) {
+  var opcoes = lista.querySelectorAll('[role="option"]');
+  var textos = [];
+  for (var i = 0; i < opcoes.length; i++) {
+    var t = (opcoes[i].textContent || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+    if (t) textos.push(t);
+  }
+  return textos;
+}
+
+// Fecha a lista aberta sem escolher nada: Esc dentro dela (a biblioteca fecha o
+// menu por aí) e, se ainda estiver lá, um clique no fundo transparente do menu.
+function quizJevFecharLista(idLista) {
+  var lista = document.getElementById(idLista);
+  if (!lista) return Promise.resolve();
+  lista.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+  return quizJevEsperarAte(function () {
+    return !document.getElementById(idLista);
+  }, 600).then(function (fechou) {
+    if (fechou) return;
+    var atual = document.getElementById(idLista);
+    var raizMenu = atual && atual.closest('[role="presentation"]');
+    var fundo = raizMenu && raizMenu.querySelector(".MuiBackdrop-root");
+    if (fundo) fundo.click();
+    return quizJevEsperarAte(function () {
+      return !document.getElementById(idLista);
+    }, 600);
+  });
+}
+
+// Opções de UM dropdown, abrindo-o se preciso. Devolve a lista de textos (vazia
+// se não conseguiu). Nunca rejeita; sempre desliga o aviso de "simulando".
+function quizJevLerOpcoesDaCaixa(caixa) {
+  if (quizJevTag(caixa) === "SELECT") {
+    // <select> nativo: as opções já estão na página, não precisa abrir. Ignora o
+    // marcador de "escolha uma" (opção sem valor).
+    var nativas = [];
+    for (var i = 0; i < caixa.options.length; i++) {
+      var o = caixa.options[i];
+      var t = (o.textContent || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+      if (t && (o.value !== "" || caixa.options.length === 2)) nativas.push(t);
+    }
+    return Promise.resolve(nativas);
+  }
+  var idLista = caixa.getAttribute("aria-controls");
+  if (!idLista) return Promise.resolve([]);
+  window.__quizJevSimulando = true;
+  var lista = document.getElementById(idLista);
+  var abrir = Promise.resolve(lista);
+  if (!lista) {
+    caixa.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, view: window }));
+    abrir = quizJevEsperarAte(function () {
+      var l = document.getElementById(idLista);
+      return l && l.querySelector('[role="option"]') ? l : null;
+    }, 1500);
+  }
+  return abrir
+    .then(function (l) {
+      var textos = l ? quizJevTextosDasOpcoes(l) : [];
+      return quizJevFecharLista(idLista).then(function () {
+        return textos;
+      });
+    })
+    .catch(function () {
+      return [];
+    })
+    .then(function (textos) {
+      window.__quizJevSimulando = false;
+      return textos;
+    });
+}
+
+// Texto com marcadores + opções de cada lacuna. Resolve {texto, listas} ou
+// {erro} com a mensagem pro card.
+function quizJevColetarLacunas(range, caixas) {
+  var lido = quizJevTextoComLacunas(range);
+  if (lido.total !== caixas.length) return Promise.resolve({ erro: "Não consegui localizar as lacunas da questão. Selecione o texto inteiro, do enunciado até o fim do parágrafo." });
+  var listas = [];
+  var cadeia = Promise.resolve(true);
+  caixas.forEach(function (caixa, i) {
+    cadeia = cadeia.then(function (ok) {
+      if (!ok) return false;
+      return quizJevLerOpcoesDaCaixa(caixa).then(function (textos) {
+        if (textos.length < 2) return false;
+        listas.push(textos);
+        return true;
+      });
+    });
+  });
+  return cadeia.then(function (ok) {
+    if (!ok) return { erro: "Não consegui ler as opções da lacuna " + (listas.length + 1) + ". Abra o dropdown e tente de novo." };
+    return { texto: lido.texto, listas: listas };
+  });
+}
+
 // ---- Modo Jev: imagem e pedido ----
 
 // O Jev só aceita PNG/JPEG. Imagem em outro formato (webp/gif lidos do arquivo
@@ -725,6 +898,12 @@ function quizJevImagemParaModo(img) {
 // {raw, imageBase64?, imageMime?} -> {jev: pedido}. Lança Error (com texto pro
 // card) quando não há como perguntar ao Jev.
 function quizJevPayloadJev(payload) {
+  if (payload.lacunas) {
+    var imagemLac = payload.imageBase64 ? { base64: payload.imageBase64, mime: payload.imageMime } : null;
+    // Tira o cabeçalho da plataforma ("Questão 02 de 06", "10 PONTOS") do texto.
+    var enunciado = quizJevLimparLinhas(payload.raw).join("\n");
+    return { jev: quizJevMontarPedidoJev({ pergunta: enunciado, lacunas: payload.lacunas, imagem: imagemLac }) };
+  }
   // Afirmativas a julgar (Certo/Errado em cada alternativa) ou escolha única.
   var questao = quizJevDetectarJulgamento(quizJevSepararQuestao(payload.raw));
   var imagem = payload.imageBase64 ? { base64: payload.imageBase64, mime: payload.imageMime } : null;
@@ -804,7 +983,7 @@ function quizJevChamarJev(pedido) {
         if (!res.ok) erro = new Error(quizJevMensagemHttpJev(res.status));
         else {
           try {
-            return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico, pedido.julgamento);
+            return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico, pedido.julgamento, pedido.lacunas);
           } catch (e) {
             erro = e;
           }
@@ -850,6 +1029,7 @@ function quizJevMensagemRelay(payload) {
         opcoes: payload.jev.opcoes,
         generico: payload.jev.generico,
         julgamento: payload.jev.julgamento,
+        lacunas: payload.jev.lacunas,
         precisaHeaderImagem: payload.jev.precisaHeaderImagem,
       },
     };
@@ -1176,11 +1356,33 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
   var aindaAberto = function () {
     return quizJevAindaAberto(contexto);
   };
-  var pImagem = visuais.length ? quizJevResolverImagem(visuais, range, rect, card, aindaAberto) : Promise.resolve(null);
+  // Lacunas com dropdown (só no modo Jev): lê o texto com marcadores e as opções
+  // de cada lista ANTES de qualquer captura de imagem.
+  var caixas = QUIZ_JEV_MODO === "jev" ? quizJevEncontrarLacunas(range) : [];
+  var pLacunas = Promise.resolve(null);
+  if (caixas.length) {
+    quizJevLimpar(card);
+    quizJevMontarCarregando(card, "Lendo as lacunas…");
+    quizJevPosicionar(card, rect);
+    pLacunas = quizJevColetarLacunas(range, caixas);
+  }
+  var pImagem = pLacunas.then(function (lac) {
+    if (lac && lac.erro) return null;
+    return visuais.length ? quizJevResolverImagem(visuais, range, rect, card, aindaAberto) : null;
+  });
 
-  pImagem.then(quizJevImagemParaModo).then(function (img) {
+  Promise.all([pLacunas, pImagem.then(quizJevImagemParaModo)]).then(function (par) {
+    var lacunas = par[0];
+    var img = par[1];
     if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== contexto) return;
-    var payload = { raw: raw };
+    if (lacunas && lacunas.erro) {
+      quizJevLimpar(card);
+      quizJevMontarErro(card, lacunas.erro);
+      quizJevPosicionar(card, rect);
+      return;
+    }
+    var payload = { raw: lacunas ? lacunas.texto : raw };
+    if (lacunas) payload.lacunas = lacunas.listas;
     var temImagem = false;
     var imagemFalhou = false;
     if (img && img.base64) {

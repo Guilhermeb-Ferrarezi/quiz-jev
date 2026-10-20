@@ -56,6 +56,8 @@ var QUIZ_JEV_CSS = [
   ".veredito.errado { background: #fee2e2; color: #991b1b; }",
   ".veredito.incerto { outline: 1px dashed currentColor; outline-offset: 1px; }",
   ".julga-pct { flex: 0 0 auto; font-size: 11px; color: #71717a; }",
+  ".lacuna-escolha { flex: 1; font-weight: 600; }",
+  ".lacuna-escolha.incerto { text-decoration: underline dashed; text-underline-offset: 3px; }",
   ".barras { margin-top: 10px; display: grid; gap: 3px; }",
   ".barra { display: grid; grid-template-columns: 18px 1fr 38px; gap: 6px; align-items: center; font-size: 12px; color: #52525b; }",
   ".barra i { display: block; height: 6px; border-radius: 3px; background: #a1a1aa; width: 0; transition: width 420ms cubic-bezier(.16,1,.3,1); }",
@@ -189,7 +191,38 @@ function quizJevMontarJulgamento(card, d, comImagem, imagemFalhou) {
   card.appendChild(quizJevDica());
 }
 
+// Lacunas com dropdown: uma linha por lacuna com a opção escolhida. Abaixo de 65%
+// de confiança a opção fica sublinhada em tracejado: vale conferir aquela.
+function quizJevMontarLacunas(card, d, comImagem, imagemFalhou) {
+  card.classList.remove("carregando-ativo");
+  card.classList.add("aberta");
+  var topo = quizJevEl("div", "linha");
+  topo.appendChild(quizJevEl("span", "texto", "Complete as lacunas:"));
+  topo.appendChild(quizJevEl("span", "badge " + (d.source === "claude" ? "claude" : "jev"), d.source === "claude" ? "claude" : "jev"));
+  if (comImagem) topo.appendChild(quizJevEl("span", "badge imagem", "figura"));
+  card.appendChild(topo);
+  var lista = quizJevEl("div", "opcoes-multipla");
+  for (var i = 0; i < d.itens.length; i++) {
+    var it = d.itens[i];
+    var linha = quizJevEl("div", "julga item-cascata");
+    linha.style.animationDelay = i * 60 + "ms";
+    linha.appendChild(quizJevEl("span", "opcao-letra", "[" + it.n + "]"));
+    linha.appendChild(quizJevEl("span", "lacuna-escolha" + (it.prob < 0.65 ? " incerto" : ""), it.texto));
+    linha.appendChild(quizJevEl("span", "julga-pct", Math.round(it.prob * 100) + "%"));
+    lista.appendChild(linha);
+  }
+  card.appendChild(lista);
+  if (imagemFalhou) {
+    card.appendChild(quizJevEl("div", "aviso", "Não consegui enviar a figura desta questão — respondida só com o texto."));
+  }
+  card.appendChild(quizJevDica());
+}
+
 function quizJevMontarResposta(card, d, comImagem, imagemFalhou) {
+  if (d.kind === "lacunas") {
+    quizJevMontarLacunas(card, d, comImagem, imagemFalhou);
+    return;
+  }
   if (d.kind === "julgamento") {
     quizJevMontarJulgamento(card, d, comImagem, imagemFalhou);
     return;

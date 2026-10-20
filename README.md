@@ -125,6 +125,18 @@ e cole o endereço que ele imprimir no campo "Endereço do proxy" da página. A
 chave do Jev fica **dentro do favorito** (quem tiver acesso ao seu navegador a
 enxerga): use uma chave com limite de gasto.
 
+**Lacunas com dropdown.** Em questões de completar lacunas escolhendo numa lista,
+o favorito acha os dropdowns dentro da seleção (`<select>` nativo ou o padrão
+`role="combobox"` + `aria-haspopup="listbox"` do MUI e parecidos), marca a posição
+de cada lacuna no texto (`[1]`, `[2]`…) e faz **uma pergunta de escolha ao Jev por
+lacuna**. O card mostra a opção escolhida em cada uma, com a confiança (sublinhado
+tracejado abaixo de 65%). Num `<select>` as opções já estão na página; nos
+dropdowns de biblioteca a lista só existe aberta, então o favorito **abre cada um
+(`mousedown`), lê as opções e fecha com `Esc` sem escolher nada** — a página
+fica como estava, e quem marca a resposta é você. Os eventos simulados não fecham
+o próprio card. Se não achar as lacunas ou ler menos de duas opções, o card diz o
+que faltou em vez de chutar. Só no modo Jev.
+
 **Atalho de teclado.** Depois do primeiro uso numa página, `Alt+Q` e
 `Alt+Shift+Q` funcionam sem clicar de novo. Para o primeiro uso também sem mouse:
 no Chrome/Edge, deixe o favorito na **primeira posição** da barra e use
@@ -135,6 +147,12 @@ qualquer aba, sem clique nenhum, só a extensão oferece.
 A transição animada de altura entre estados do card (da extensão) foi
 simplificada para uma troca direta — as animações visuais (entrada, "pop" da
 letra, barras, "Consultando" com bolinhas) continuam as mesmas.
+
+**Tamanho do favorito.** O link `javascript:` precisa ficar abaixo de ~64 KB (limite
+de alguns navegadores). O build comprime o CSS do card, encurta os nomes `quizJev*`
+e a página de instalação codifica só o necessário (`%`, `#`, quebras de linha e
+acentos: num `javascript:` espaço, aspas e chaves não precisam de escape). O
+`bun bookmarklet/build.js` imprime o tamanho do link; hoje ~56 KB.
 
 O código-fonte do bookmarklet vive em `bookmarklet/` (`render-shared.js` é o
 visual do card, reaproveitado por `docs/relay.html`; `captura.js` são as contas

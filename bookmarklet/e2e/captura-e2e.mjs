@@ -70,6 +70,52 @@ const PAGINAS = {
     ]
       .map(([l, t]) => `<div>${l}) ${t}<div><label><input type="radio" name="${l}">Certo</label> <label><input type="radio" name="${l}">Errado</label></div></div>`)
       .join("")}</div></body>`,
+  // Lacunas com dropdown, imitando o Select do MUI (estrutura do HTML real da prova):
+  // <div role="combobox" aria-controls> e a lista (role="listbox") num portal no <body>
+  // só enquanto aberta. A primeira já nasce aberta, como no HTML colado. Abre no
+  // mousedown; fecha com Esc dentro da lista ou clique no fundo.
+  "/lacunas": `<body style="${estilo}"><div id="q">
+    <h6><p>Questão <b>02</b> de 06</p></h6><div><p>*</p><p>10 PONTOS</p></div>
+    <div class="ql-editor"><p>No texto, a palavra "por quê" aparece na última pergunta da mãe.</p><p><br></p><p>Analise o parágrafo explicativo abaixo e complete cada uma das lacunas com o "porquê" correto:</p></div>
+    <div style="line-height:2.5">${[
+      ["O ", ":r1h:", "1-", " é usado em perguntas diretas ou indiretas. Já "],
+      ["", ":r1i:", "3-", " é usado em respostas. Quando aparece no final de frases, utiliza-se "],
+      ["", ":r1j:", "5-", ". Por fim, "],
+      ["", ":r1k:", "7-", " é usado como substantivo."],
+    ]
+      .map(
+        ([antes, ctl, id, depois]) =>
+          `<span style="white-space:pre-wrap">${antes}</span><span style="position:relative;display:inline-block"><div class="MuiInputBase-root"><div tabindex="0" role="combobox" aria-controls="${ctl}" aria-expanded="false" aria-haspopup="listbox" id="${id}" class="MuiSelect-select" style="display:inline-block;min-width:60px;border:1px solid green;padding:4px"><span class="notranslate"></span></div><input aria-hidden="true" tabindex="-1" value=""><svg width="12" height="12" viewBox="0 0 24 24"><path d="M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"></path></svg></div></span><span style="white-space:pre-wrap">${depois}</span>`
+      )
+      .join("")}</div></div>
+    <script>
+      var OPCOES = ['"porquê"', '"por que"', '"porque"', '"por quê"'];
+      function abrir(caixa) {
+        var id = caixa.getAttribute("aria-controls");
+        if (document.getElementById(id)) return;
+        var raiz = document.createElement("div");
+        raiz.setAttribute("role", "presentation");
+        raiz.innerHTML = '<div class="MuiBackdrop-root" style="position:fixed;inset:0"></div>';
+        var ul = document.createElement("ul");
+        ul.setAttribute("role", "listbox"); ul.id = id; ul.tabIndex = -1;
+        ul.style.cssText = "position:fixed;left:30px;top:60px;background:#fff;border:1px solid #999;margin:0;padding:4px;list-style:none";
+        OPCOES.forEach(function (t) { var li = document.createElement("li"); li.setAttribute("role", "option"); li.textContent = t; ul.appendChild(li); });
+        raiz.appendChild(ul);
+        document.body.appendChild(raiz);
+        caixa.setAttribute("aria-expanded", "true");
+        function fechar() { caixa.setAttribute("aria-expanded", "false"); setTimeout(function () { raiz.remove(); }, 120); }
+        raiz.addEventListener("keydown", function (e) { if (e.key === "Escape") fechar(); });
+        raiz.querySelector(".MuiBackdrop-root").addEventListener("click", fechar);
+      }
+      document.querySelectorAll('[role="combobox"]').forEach(function (c) {
+        c.addEventListener("mousedown", function (e) { if (e.button !== 0) return; e.preventDefault(); abrir(c); });
+      });
+      abrir(document.querySelector('[role="combobox"]'));
+    </script></body>`,
+  // Lacunas com <select> nativo: as opções já estão na página (não precisa abrir).
+  "/lacunas-select": `<body style="${estilo}"><div id="q"><p>Complete as lacunas do texto escolhendo a opção correta:</p>
+    <p>O gato <select><option value="">escolha</option><option value="1">mia</option><option value="2">late</option><option value="3">canta</option></select> e o cão
+    <select><option value="">escolha</option><option value="1">mia</option><option value="2">late</option><option value="3">canta</option></select> alto.</p></div></body>`,
   "/sem-alternativas": `<body style="${estilo}"><div id="q"><p>Explique, com suas palavras, como funciona a fotossíntese.</p>
     <p>Responda em um parágrafo curto.</p><p>Valor: 2 pontos.</p></div></body>`,
 };
@@ -84,6 +130,19 @@ const servidor = Bun.serve({
 });
 const BASE = `http://127.0.0.1:${servidor.port}`;
 
+// A página de instalação (docs/) servida de verdade, pra gerar o favorito por ela.
+const servidorDocs = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    const caminho = new URL(req.url).pathname;
+    const arquivo = path.join(RAIZ, "docs", caminho === "/" ? "index.html" : caminho.replace(/^\//, ""));
+    if (!arquivo.startsWith(path.join(RAIZ, "docs")) || !fs.existsSync(arquivo)) return new Response("404", { status: 404 });
+    return new Response(Bun.file(arquivo));
+  },
+});
+const BASE_DOCS = `http://127.0.0.1:${servidorDocs.port}`;
+
 // ---- Proxy do Jev falso (modo Jev) ----
 // Grava cada pedido e responde no formato do Jev. A chave "apikey_e2e_ok" é a
 // válida; qualquer outra leva 401.
@@ -92,6 +151,34 @@ const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers
 // CORS do api-go interceptado (modo normal): o favorito manda X-Quiz-Key.
 const CORS_API_GO = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-quiz-key", "access-control-allow-methods": "POST,OPTIONS,HEAD" };
 const pedidosProxy = [];
+
+// O "Jev" falso: devolve {status, corpo} no formato da API real.
+function jevFalso(corpo, autorizacao) {
+  if (autorizacao !== `Bearer ${CHAVE_JEV_OK}`) return { status: 401, corpo: { message: "invalid key" } };
+  const perguntas = Object.keys(corpo.questions);
+  // Lacunas com dropdown: uma escolha por lacuna. Lacuna 1 -> B (90%), 2 -> C (60%, incerta), demais -> A.
+  if (perguntas.every((k) => k.startsWith("lacuna_"))) {
+    const respostas = {};
+    for (const k of perguntas) {
+      const n = Number(k.split("_")[1]);
+      const rotulos = Object.keys(corpo.questions[k].criteria);
+      const escolha = n === 1 ? "B" : n === 2 ? "C" : "A";
+      const pico = n === 2 ? 0.6 : 0.9;
+      respostas[k] = { type: "choice", choice: escolha, confidence: pico, probabilities: Object.fromEntries(rotulos.map((r) => [r, r === escolha ? pico : (1 - pico) / (rotulos.length - 1)])) };
+    }
+    return { status: 200, corpo: { model: "jev-1.13.0", answers: respostas } };
+  }
+  // Afirmativas a julgar: uma pergunta sim/não (noul) por alternativa. C e D certas.
+  if (!corpo.questions.resposta) {
+    const prob = { alt_A: 0.1, alt_B: 0.05, alt_C: 0.92, alt_D: 0.8 };
+    const respostas = Object.fromEntries(perguntas.map((k) => [k, { type: "noul", noul: prob[k] ?? 0.5 }]));
+    return { status: 200, corpo: { model: "jev-1.13.0", answers: respostas } };
+  }
+  const opcoes = Object.keys(corpo.questions.resposta.criteria).filter((k) => k !== "Ilegível");
+  const probs = Object.fromEntries(opcoes.map((o) => [o, o === "B" ? 0.9 : 0.1 / (opcoes.length - 1)]));
+  return { status: 200, corpo: { model: "jev-1.13.0", answers: { resposta: { type: "choice", choice: "B", confidence: 0.85, probabilities: probs } } } };
+}
+
 const proxy = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -100,18 +187,8 @@ const proxy = Bun.serve({
     if (req.method !== "POST") return new Response("ok", { headers: CORS });
     const corpo = await req.json();
     pedidosProxy.push({ cabecalhos: Object.fromEntries(req.headers), corpo });
-    if (req.headers.get("authorization") !== `Bearer ${CHAVE_JEV_OK}`) {
-      return Response.json({ message: "invalid key" }, { status: 401, headers: CORS });
-    }
-    // Afirmativas a julgar: uma pergunta sim/não (noul) por alternativa. C e D certas.
-    if (!corpo.questions.resposta) {
-      const prob = { alt_A: 0.1, alt_B: 0.05, alt_C: 0.92, alt_D: 0.8 };
-      const respostas = Object.fromEntries(Object.keys(corpo.questions).map((k) => [k, { type: "noul", noul: prob[k] ?? 0.5 }]));
-      return Response.json({ model: "jev-1.13.0", answers: respostas }, { headers: CORS });
-    }
-    const opcoes = Object.keys(corpo.questions.resposta.criteria).filter((k) => k !== "Ilegível");
-    const probs = Object.fromEntries(opcoes.map((o) => [o, o === "B" ? 0.9 : 0.1 / (opcoes.length - 1)]));
-    return Response.json({ model: "jev-1.13.0", answers: { resposta: { type: "choice", choice: "B", confidence: 0.85, probabilities: probs } } }, { headers: CORS });
+    const r = jevFalso(corpo, req.headers.get("authorization"));
+    return Response.json(r.corpo, { status: r.status, headers: CORS });
   },
 });
 const URL_PROXY = `http://127.0.0.1:${proxy.port}`;
@@ -226,14 +303,14 @@ async function linhasBrancas(cdp, base64, x0, x1, margemTopo, margemBase) {
 const LER_CARD = `(() => {
   const h = document.getElementById("__quiz-jev-bookmarklet"); if (!h) return null;
   const s = h.shadowRoot, q = (sel) => { const e = s.querySelector(sel); return e ? e.textContent : null; };
-  return { letra: q(".letra"), erro: q(".erro"), texto: q(".card"), vereditos: [...s.querySelectorAll(".veredito")].map((e) => e.textContent), textos: [...s.querySelectorAll(".julga .opcao-texto")].map((e) => e.textContent) };
+  return { letra: q(".letra"), erro: q(".erro"), texto: q(".card"), vereditos: [...s.querySelectorAll(".veredito")].map((e) => e.textContent), textos: [...s.querySelectorAll(".julga .opcao-texto")].map((e) => e.textContent), lacunas: [...s.querySelectorAll(".lacuna-escolha")].map((e) => ({ texto: e.textContent, incerta: e.classList.contains("incerto") })), numeros: [...s.querySelectorAll(".julga .opcao-letra")].map((e) => e.textContent) };
 })()`;
 
 // opcoes: { modo: "qz" | "jev", chave, analise(cdp, imagemBase64), aposRodar(cdp) }
 async function cenario(nome, caminho, opcoes = {}) {
   const modo = opcoes.modo || "qz";
   const chave = opcoes.chave || (modo === "jev" ? CHAVE_JEV_OK : "qz_e2etestkey1234567890");
-  const codigo = montarCodigo(modo, chave, modo === "jev" ? URL_PROXY : "");
+  const codigo = opcoes.href ? null : montarCodigo(modo, chave, modo === "jev" ? URL_PROXY : "");
 
   const aba = await (await fetch(`http://127.0.0.1:${PORTA_CDP}/json/new?${BASE}${caminho}`, { method: "PUT" })).json();
   const cdp = conectar(aba.webSocketDebuggerUrl);
@@ -242,7 +319,8 @@ async function cenario(nome, caminho, opcoes = {}) {
   await cdp.enviar("Runtime.enable");
   await cdp.enviar("Network.enable");
   await cdp.enviar("Page.bringToFront");
-  await cdp.enviar("Fetch.enable", { patterns: [{ urlPattern: "https://api.santos-tech.com/*" }] });
+  // api-go (modo normal) e o proxy "https://proxy.teste" (favorito gerado pela página, que só aceita https).
+  await cdp.enviar("Fetch.enable", { patterns: [{ urlPattern: "https://api.santos-tech.com/*" }, { urlPattern: "https://proxy.teste/*" }] });
 
   const postsApiGo = [];
   const errosPagina = [];
@@ -250,13 +328,23 @@ async function cenario(nome, caminho, opcoes = {}) {
     if (msg.method === "Runtime.exceptionThrown") errosPagina.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
     if (msg.method !== "Fetch.requestPaused") return;
     const { requestId, request, networkId } = msg.params;
-    const responder = (status, corpo) =>
+    const responder = (status, corpo, cors = CORS_API_GO) =>
       cdp.enviar("Fetch.fulfillRequest", {
         requestId,
         responseCode: status,
-        responseHeaders: Object.entries({ ...CORS_API_GO, "content-type": "application/json" }).map(([name, value]) => ({ name, value })),
+        responseHeaders: Object.entries({ ...cors, "content-type": "application/json" }).map(([name, value]) => ({ name, value })),
         body: Buffer.from(corpo || "").toString("base64"),
       });
+    if (request.url.startsWith("https://proxy.teste/")) {
+      if (request.method !== "POST") return responder(204, "", CORS);
+      let texto = request.postData;
+      if (texto === undefined && request.hasPostData) texto = (await cdp.enviar("Network.getRequestPostData", { requestId: networkId })).postData;
+      const cabecalhos = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
+      const corpo = JSON.parse(texto);
+      pedidosProxy.push({ cabecalhos, corpo });
+      const r = jevFalso(corpo, cabecalhos.authorization);
+      return responder(r.status, JSON.stringify(r.corpo), CORS);
+    }
     if (request.method === "POST") {
       let corpo = request.postData;
       if (corpo === undefined && request.hasPostData) corpo = (await cdp.enviar("Network.getRequestPostData", { requestId: networkId })).postData;
@@ -278,8 +366,10 @@ async function cenario(nome, caminho, opcoes = {}) {
 
   const antesProxy = pedidosProxy.length;
   const t0 = Date.now();
-  // userGesture: o getDisplayMedia só abre com ativação do usuário.
-  await cdp.enviar("Runtime.evaluate", { expression: codigo, userGesture: true });
+  // userGesture: o getDisplayMedia só abre com ativação do usuário. Com `href`, roda o
+  // link `javascript:` gerado pela página de instalação, do jeito que o favorito roda.
+  if (opcoes.href) await cdp.enviar("Page.navigate", { url: opcoes.href });
+  else await cdp.enviar("Runtime.evaluate", { expression: codigo, userGesture: true });
   if (opcoes.aposRodar) await opcoes.aposRodar(cdp);
 
   const enviado = () => (modo === "jev" ? pedidosProxy.length > antesProxy : postsApiGo.length > 0);
@@ -300,6 +390,8 @@ async function cenario(nome, caminho, opcoes = {}) {
   ).result.value;
 
   const resultado = { nome, viewport, medidas, ms, enviou: enviado(), card, errosPagina };
+  // Estado da página DEPOIS do favorito (ex.: ele deixou dropdown aberto?).
+  if (opcoes.analisePagina) resultado.pagina = await opcoes.analisePagina(cdp);
   if (enviado()) {
     // No modo Jev, a imagem é o asset do pedido; no normal, imageBase64.
     let post, base64, mime;
@@ -329,6 +421,34 @@ async function cenario(nome, caminho, opcoes = {}) {
   cdp.fechar();
   await fetch(`http://127.0.0.1:${PORTA_CDP}/json/close/${aba.id}`);
   return resultado;
+}
+
+// Abre a página de instalação, preenche a chave do Jev e o proxy, clica em gerar e
+// devolve o `href` do botão azul (o que o usuário arrastaria pra barra).
+async function gerarFavoritoPelaPagina() {
+  const aba = await (await fetch(`http://127.0.0.1:${PORTA_CDP}/json/new?${BASE_DOCS}/`, { method: "PUT" })).json();
+  const cdp = conectar(aba.webSocketDebuggerUrl);
+  await cdp.pronto;
+  await cdp.enviar("Runtime.enable");
+  for (let i = 0; i < 40; i++) {
+    const r = await cdp.enviar("Runtime.evaluate", { expression: "document.readyState === 'complete' && !!window.QUIZ_JEV_BOOKMARKLET_TEMPLATE", returnByValue: true });
+    if (r.result.value) break;
+    await Bun.sleep(100);
+  }
+  const href = (
+    await cdp.enviar("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        document.getElementById("campo-chave-jev").value = ${JSON.stringify(CHAVE_JEV_OK)};
+        document.getElementById("campo-proxy").value = "https://proxy.teste";
+        document.getElementById("botao-gerar-jev").click();
+        return document.getElementById("link-bookmarklet").getAttribute("href");
+      })()`,
+    })
+  ).result.value;
+  cdp.fechar();
+  await fetch(`http://127.0.0.1:${PORTA_CDP}/json/close/${aba.id}`);
+  return href;
 }
 
 let falhas = 0;
@@ -402,6 +522,38 @@ try {
   conferir(JSON.stringify(jJulga.card?.vereditos) === JSON.stringify(["Errado", "Errado", "Certo", "Certo"]), `o card mostra Errado, Errado, Certo, Certo (${JSON.stringify(jJulga.card?.vereditos)})`);
   conferir(jJulga.card?.textos?.length === 4 && !/Certo Errado/.test(jJulga.card.textos.join(" ")), "as quatro afirmativas aparecem no card");
 
+  console.log("lacunas com dropdown (estrutura do MUI): abre cada lista, lê as opções e fecha sem escolher");
+  const jLac = await cenario("jev-lacunas", "/lacunas", {
+    modo: "jev",
+    analisePagina: async (cdp) =>
+      (await cdp.enviar("Runtime.evaluate", { returnByValue: true, expression: `({ listas: document.querySelectorAll('[role="listbox"]').length, expandidos: document.querySelectorAll('[aria-expanded="true"]').length, valores: [...document.querySelectorAll('[role="combobox"]')].map((e) => e.textContent) })` })).result.value,
+  });
+  conferir(jLac.enviou, "chegou ao proxy");
+  if (jLac.jev) {
+    const c = jLac.jev.corpo;
+    conferir(JSON.stringify(Object.keys(c.questions)) === JSON.stringify(["lacuna_1", "lacuna_2", "lacuna_3", "lacuna_4"]), "uma pergunta de escolha por lacuna");
+    const ops = Object.values(c.questions.lacuna_3.criteria);
+    conferir(ops.length === 4 && ops[1].includes("por que") && ops[3].includes("por quê"), `as 4 opções da lacuna 3 foram lidas do dropdown (${JSON.stringify(ops)})`);
+    conferir(typeof c.state === "string" && c.state.startsWith("No texto") && /\[1\].*\[2\].*\[3\].*\[4\]/s.test(c.state), "o texto vai com os marcadores [1] a [4] na ordem");
+    conferir(!/PONTOS|Questão 02/.test(c.state), "e sem o cabeçalho da plataforma");
+    conferir(c.state.includes("O [1] é usado em perguntas") && c.state.includes("utiliza-se [3] . Por fim, [4] é usado"), "cada marcador fica no lugar certo da frase");
+  }
+  conferir(JSON.stringify(jLac.card?.numeros) === JSON.stringify(["[1]", "[2]", "[3]", "[4]"]), `o card lista as 4 lacunas (${JSON.stringify(jLac.card?.numeros)})`);
+  conferir(JSON.stringify(jLac.card?.lacunas?.map((l) => l.texto)) === JSON.stringify(['"por que"', '"porque"', '"porquê"', '"porquê"']), `com a opção escolhida em cada (${JSON.stringify(jLac.card?.lacunas?.map((l) => l.texto))})`);
+  conferir(jLac.card?.lacunas?.[1]?.incerta === true && jLac.card?.lacunas?.[0]?.incerta === false, "só a lacuna de 60% de confiança fica marcada como incerta");
+  conferir(jLac.pagina?.listas === 0 && jLac.pagina?.expandidos === 0, `a página fica como estava: nenhuma lista aberta (${JSON.stringify(jLac.pagina)})`);
+  conferir(jLac.pagina?.valores?.every((v) => v === ""), "e nenhuma opção foi escolhida por ele");
+
+  console.log("lacunas com <select> nativo: lê as opções sem abrir nada e ignora o 'escolha'");
+  const jSel = await cenario("jev-lacunas-select", "/lacunas-select", { modo: "jev" });
+  conferir(jSel.enviou, "chegou ao proxy");
+  if (jSel.jev) {
+    const c = jSel.jev.corpo;
+    conferir(JSON.stringify(Object.values(c.questions.lacuna_1.criteria).map((t) => t.match(/«(.*)»/)[1])) === JSON.stringify(["mia", "late", "canta"]), "as opções são mia, late e canta (sem o 'escolha')");
+    conferir(c.state.includes("O gato [1] e o cão [2] alto."), `o texto vai com os marcadores (${JSON.stringify(String(c.state).slice(-45))})`);
+  }
+  conferir(jSel.card?.numeros?.length === 2, "o card lista as 2 lacunas");
+
   console.log("chave recusada (401): mensagem clara no card");
   const jRuim = await cenario("jev-chave-ruim", "/texto", { modo: "jev", chave: "apikey_errada_" + "y".repeat(30) });
   conferir(jRuim.enviou && /chave do Jev foi recusada/i.test(jRuim.card?.erro || ""), `card: ${JSON.stringify(jRuim.card?.erro)}`);
@@ -411,6 +563,17 @@ try {
   conferir(!jSem.enviou && /só escolhe entre alternativas/i.test(jSem.card?.erro || ""), `card: ${JSON.stringify(jSem.card?.erro)}`);
 
   console.log("tecla T (pergunta livre): explica que não existe no modo Jev");
+  console.log("favorito gerado pela PÁGINA DE INSTALAÇÃO (link javascript: de verdade)");
+  const href = await gerarFavoritoPelaPagina();
+  conferir(href.startsWith("javascript:") && href.length < 65000, `o link tem ${href.length} bytes (limite ~65536)`);
+  conferir(!/%20|%22|%7B/.test(href) && !/[^\x20-\x7e]/.test(href), "codificação mínima: espaço, aspas e chaves ficam como estão; nada de não-ASCII cru");
+  const jPagina = await cenario("jev-favorito-da-pagina", "/texto", { modo: "jev", href });
+  conferir(jPagina.enviou && jPagina.card?.letra === "B" && !jPagina.card?.erro, `o link gerado roda e mostra a alternativa (${JSON.stringify(jPagina.card?.letra)} ${JSON.stringify(jPagina.card?.erro)})`);
+  if (jPagina.jev) {
+    conferir(jPagina.jev.cabecalhos.authorization === `Bearer ${CHAVE_JEV_OK}`, "a chave digitada na página chegou ao pedido");
+    conferir(Object.keys(jPagina.jev.corpo.questions.resposta.criteria).length === 4, "e as alternativas também");
+  }
+
   const jT = await cenario("jev-tecla-t", "/texto", {
     modo: "jev",
     aposRodar: async (cdp) => {
@@ -425,6 +588,7 @@ try {
 } finally {
   chrome.kill();
   servidor.stop(true);
+  servidorDocs.stop(true);
   proxy.stop(true);
   await Bun.sleep(500);
   try {

@@ -271,6 +271,18 @@
   }
   botaoGerarJev.addEventListener("click", gerarJev);
 
+  // O código cresceu (captura de aba, modo Jev, lacunas) e, com encodeURI, o link
+  // passaria dos ~64 KB que alguns navegadores aceitam num favorito: espaço, aspas
+  // e chaves viram %20/%22/%7B… e custam 3 bytes cada. Num "javascript:" o
+  // navegador não precisa disso (o caminho é opaco: só caracteres de controle são
+  // codificados), então só vai codificado o necessário: "%" (senão "%2" seria lido
+  // como escape), "#" (senão vira fragmento), quebras de linha e o que não é ASCII.
+  function codificarFavorito(codigo) {
+    return codigo.replace(/[%#\u0000-\u001f\u007f-\u{10ffff}]/gu, function (c) {
+      return encodeURIComponent(c);
+    });
+  }
+
   // Monta o favorito com a chave (já validada). `ondeErro` é onde avisar se
   // o template não carregou; `extras` ({modo, proxy}) é só do modo Jev — sem ele
   // o favorito é o normal, com chave Santos Tech. Retorna true se deu certo.
@@ -291,12 +303,7 @@
       .split("__QUIZ_KEY__").join(chave)
       .split("__QUIZ_MODO__").join(modo)
       .split("__QUIZ_PROXY__").join(proxy);
-    // encodeURI (+ o "#", que ele deixa passar e viraria fragmento) em vez de
-    // encodeURIComponent: o código cresceu com a captura de aba e, codificado
-    // por inteiro, o link passaria dos ~64 KB que alguns navegadores aceitam
-    // num favorito. ( ) [ ] ' ; , : / ? & = + continuam literais — dentro de um
-    // "javascript:" são só JS; "%" vira %25 e volta igual.
-    var url = "javascript:" + encodeURI(codigo).replace(/#/g, "%23");
+    var url = "javascript:" + codificarFavorito(codigo);
 
     linkBookmarklet.setAttribute("href", url);
     codigoBookmarklet.value = url;

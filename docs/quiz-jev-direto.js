@@ -131,6 +131,7 @@ function quizJevMarcadorDeImagem() {
 // Lança Error se não há o que perguntar ao Jev. A imagem do Jev só aceita
 // PNG/JPEG: quem chama converte webp/gif antes.
 function quizJevMontarPedidoJev(entrada) {
+  if (entrada.lacunas) return quizJevMontarPedidoLacunas(entrada);
   var opcoes = entrada.opcoes;
   var generico = false;
   if (!opcoes) {
@@ -180,6 +181,60 @@ function quizJevMontarPedidoJev(entrada) {
   return { corpo: corpo, opcoes: opcoes, generico: generico, precisaHeaderImagem: !!entrada.imagem };
 }
 
+// ---- Lacunas com dropdown ----
+// Texto com lacunas a completar escolhendo, em cada uma, uma opção de uma lista
+// (dropdown). O texto chega com a posição de cada lacuna marcada ([1], [2]…) e a
+// lista de opções de cada uma lida da página. Uma pergunta de escolha ("choice")
+// por lacuna, na MESMA chamada.
+//
+// `entrada.lacunas`: lista (uma por lacuna) de listas de textos de opção.
+function quizJevMontarPedidoLacunas(entrada) {
+  var listas = entrada.lacunas;
+  if (!listas.length) throw new Error("Não encontrei lacunas para preencher.");
+  var perguntas = {};
+  var mapas = [];
+  for (var i = 0; i < listas.length; i++) {
+    var n = i + 1;
+    if (listas[i].length < QUIZ_JEV_MIN_ALTERNATIVAS) throw new Error("A lacuna " + n + " tem menos de duas opções.");
+    var criterios = {};
+    var mapa = {};
+    for (var j = 0; j < listas[i].length; j++) {
+      var rotulo = String.fromCharCode(65 + j);
+      mapa[rotulo] = listas[i][j];
+      criterios[rotulo] = "completa a lacuna [" + n + "] com «" + listas[i][j] + "»";
+    }
+    mapas.push(mapa);
+    perguntas["lacuna_" + n] = { type: "choice", instructions: "Qual opção completa corretamente a lacuna [" + n + "] do texto?", criteria: criterios };
+  }
+  var corpo = { model: QUIZ_JEV_MODELO, state: entrada.pergunta || "", questions: perguntas };
+  if (entrada.imagem) {
+    var formato = quizJevFormatoDaImagem(entrada.imagem.mime);
+    if (!formato) throw new Error("O Jev só aceita imagem PNG ou JPEG.");
+    var marcador = quizJevMarcadorDeImagem();
+    corpo.state = entrada.pergunta ? [entrada.pergunta, marcador] : [marcador];
+    corpo.assets = {};
+    corpo.assets[marcador] = { type: "image", format: formato, data_base64: entrada.imagem.base64 };
+  }
+  return { corpo: corpo, opcoes: {}, lacunas: mapas, generico: false, julgamento: false, precisaHeaderImagem: !!entrada.imagem };
+}
+
+function quizJevInterpretarLacunas(bruto, mapas) {
+  var respostas = (bruto && bruto.answers) || {};
+  var itens = [];
+  for (var i = 0; i < mapas.length; i++) {
+    var n = i + 1;
+    var item = respostas["lacuna_" + n];
+    if (!item) throw new Error("O Jev não respondeu a lacuna " + n + ".");
+    var escolha = item.choice;
+    if (!escolha || !Object.prototype.hasOwnProperty.call(mapas[i], escolha)) {
+      throw new Error("O Jev devolveu uma opção desconhecida na lacuna " + n + ".");
+    }
+    var prob = item.probabilities && typeof item.probabilities[escolha] === "number" ? item.probabilities[escolha] : item.confidence || 0;
+    itens.push({ n: n, label: escolha, texto: mapas[i][escolha], prob: prob });
+  }
+  return { kind: "lacunas", itens: itens, source: "jev", parsed: { options: {} } };
+}
+
 // Uma pergunta sim/não ("noul") por afirmativa, na MESMA chamada: o Jev devolve,
 // pra cada uma, a probabilidade de "true" (a afirmativa estar certa).
 function quizJevMontarPedidoJulgamento(entrada, opcoes) {
@@ -225,7 +280,8 @@ function quizJevInterpretarJulgamento(bruto, opcoes) {
 // Converte a resposta do Jev no objeto que o card (quizJevMontarResposta)
 // espera. Lança Error se a resposta não serve — melhor erro que uma letra que
 // não existe na prova.
-function quizJevInterpretarRespostaJev(bruto, opcoes, generico, julgamento) {
+function quizJevInterpretarRespostaJev(bruto, opcoes, generico, julgamento, lacunas) {
+  if (lacunas) return quizJevInterpretarLacunas(bruto, lacunas);
   if (julgamento) return quizJevInterpretarJulgamento(bruto, opcoes);
   var item = bruto && bruto.answers && bruto.answers.resposta;
   if (!item) throw new Error("O Jev respondeu num formato inesperado.");

@@ -4,6 +4,58 @@ import { test, expect } from "bun:test";
 
 const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento } = require("./jev-direto.js");
 
+// ---- Lacunas com dropdown ----
+
+const TEXTO_LACUNAS = 'Analise o parágrafo e complete cada lacuna com o "porquê" correto:\nO [1] é usado em perguntas. Já [2] é usado em respostas.';
+const OPCOES_PORQUE = ["porquê", "por que", "porque", "por quê"];
+
+test("pedido de lacunas: uma pergunta de escolha por lacuna, com as opções de cada uma", () => {
+  const p = quizJevMontarPedidoJev({ pergunta: TEXTO_LACUNAS, lacunas: [OPCOES_PORQUE, OPCOES_PORQUE], imagem: null });
+  expect(p.lacunas).toHaveLength(2);
+  expect(Object.keys(p.corpo.questions)).toEqual(["lacuna_1", "lacuna_2"]);
+  const q = p.corpo.questions.lacuna_2;
+  expect(q.type).toBe("choice");
+  expect(q.instructions).toContain("[2]");
+  expect(Object.keys(q.criteria)).toEqual(["A", "B", "C", "D"]);
+  expect(q.criteria.B).toContain("por que");
+  expect(p.corpo.state).toBe(TEXTO_LACUNAS);
+  expect(p.precisaHeaderImagem).toBe(false);
+});
+
+test("pedido de lacunas aceita opções diferentes por lacuna", () => {
+  const p = quizJevMontarPedidoJev({ pergunta: "x [1] y [2]", lacunas: [["a", "b"], ["c", "d", "e"]], imagem: null });
+  expect(Object.keys(p.corpo.questions.lacuna_1.criteria)).toEqual(["A", "B"]);
+  expect(Object.keys(p.corpo.questions.lacuna_2.criteria)).toEqual(["A", "B", "C"]);
+});
+
+test("lacuna com menos de 2 opções não dá para perguntar", () => {
+  expect(() => quizJevMontarPedidoJev({ pergunta: "x [1]", lacunas: [["só uma"]], imagem: null })).toThrow();
+  expect(() => quizJevMontarPedidoJev({ pergunta: "x [1]", lacunas: [], imagem: null })).toThrow();
+});
+
+test("interpreta as lacunas: o texto da opção escolhida em cada uma", () => {
+  const p = quizJevMontarPedidoJev({ pergunta: TEXTO_LACUNAS, lacunas: [OPCOES_PORQUE, OPCOES_PORQUE], imagem: null });
+  const bruto = {
+    answers: {
+      lacuna_1: { type: "choice", choice: "B", confidence: 0.9, probabilities: { A: 0.03, B: 0.9, C: 0.04, D: 0.03 } },
+      lacuna_2: { type: "choice", choice: "C", confidence: 0.6, probabilities: { A: 0.1, B: 0.2, C: 0.6, D: 0.1 } },
+    },
+  };
+  const d = quizJevInterpretarRespostaJev(bruto, {}, false, false, p.lacunas);
+  expect(d.kind).toBe("lacunas");
+  expect(d.itens.map((i) => [i.n, i.texto])).toEqual([[1, "por que"], [2, "porque"]]);
+  expect(d.itens[0].prob).toBeCloseTo(0.9);
+  expect(d.source).toBe("jev");
+});
+
+test("lacuna sem resposta ou com opção que não existe é erro", () => {
+  const mapas = [{ A: "a", B: "b" }, { A: "c", B: "d" }];
+  const so1 = { answers: { lacuna_1: { choice: "A", probabilities: { A: 1 } } } };
+  expect(() => quizJevInterpretarRespostaJev(so1, {}, false, false, mapas)).toThrow();
+  const invalida = { answers: { lacuna_1: { choice: "A" }, lacuna_2: { choice: "Z" } } };
+  expect(() => quizJevInterpretarRespostaJev(invalida, {}, false, false, mapas)).toThrow();
+});
+
 // ---- Separar enunciado e alternativas (porta de quiz_parse.go) ----
 
 test("separa enunciado e alternativas com rótulo A) B) C) D)", () => {
