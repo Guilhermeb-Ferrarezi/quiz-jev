@@ -2,7 +2,7 @@
 //   bun test bookmarklet/jev-direto.test.js
 import { test, expect } from "bun:test";
 
-const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev } = require("./jev-direto.js");
+const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento } = require("./jev-direto.js");
 
 // ---- Separar enunciado e alternativas (porta de quiz_parse.go) ----
 
@@ -136,6 +136,110 @@ test("modo só imagem: 'Ilegível' vira aviso, e some das barras quando outra é
   const ok = quizJevInterpretarRespostaJev(bruto("D", { A: 0.02, B: 0.02, C: 0.02, D: 0.9, E: 0.02, Ilegível: 0.02 }), generico, true);
   expect(ok.answer).toBe("D");
   expect(ok.probabilities.Ilegível).toBeUndefined();
+});
+
+// ---- Afirmativas para julgar (Certo / Errado em cada alternativa) ----
+
+// O texto selecionado de uma prova assim vem com "Certo" e "Errado" depois de cada afirmativa.
+const PROVA_CERTO_ERRADO = [
+  "Questão 01 de 06",
+  "* 10 PONTOS",
+  "Diversos elementos estruturais fazem parte da construção da narrativa. Ao analisar o trecho, avalie as afirmativas abaixo e marque se estão certas ou erradas.",
+  "A) A narrativa se organiza em torno de um tempo presente.",
+  "Certo",
+  "Errado",
+  "B) O ambiente escolar do internato no Alabama é o cenário principal.",
+  "Certo",
+  "Errado",
+  "C) O foco narrativo é construído em primeira pessoa.",
+  "Certo",
+  "Errado",
+  "D) O texto combina a descrição dos preparativos com a percepção do narrador.",
+  "Certo",
+  "Errado",
+].join("\n");
+
+test("o cabeçalho 'Questão 01 de 06' e '10 PONTOS' não entram no enunciado", () => {
+  const q = quizJevSepararQuestao(PROVA_CERTO_ERRADO);
+  expect(q.pergunta.startsWith("Diversos elementos")).toBe(true);
+  expect(q.pergunta).not.toContain("PONTOS");
+});
+
+test("o cabeçalho também sai quando vem tudo na mesma linha (ordem e tamanho variam por plataforma)", () => {
+  // "0610 PONTOS": os dois elementos viram texto colado na seleção, sem espaço.
+  for (const cab of ["Questão 01 de 06 10 PONTOS", "Questão 01 de 0610 PONTOS", "10 PONTOS Questão 2 de 10", "QUESTÃO 3 DE 6", "1 ponto"]) {
+    const q = quizJevSepararQuestao(`${cab}\nQual a capital?\nA) Sydney\nB) Canberra`);
+    expect(q.pergunta).toBe("Qual a capital?");
+  }
+});
+
+test("texto que só parece cabeçalho no meio do enunciado não é cortado", () => {
+  const q = quizJevSepararQuestao("Na questão 2 de 6 vale 10 pontos, certo?\nA) Sim\nB) Não");
+  expect(q.pergunta).toContain("Na questão 2 de 6");
+});
+
+test("detecta afirmativas a julgar e tira o 'Certo Errado' do texto de cada uma", () => {
+  const q = quizJevDetectarJulgamento(quizJevSepararQuestao(PROVA_CERTO_ERRADO));
+  expect(q.julgamento).toBe(true);
+  expect(q.ordem).toEqual(["A", "B", "C", "D"]);
+  expect(q.opcoes.A).toBe("A narrativa se organiza em torno de um tempo presente.");
+  expect(q.opcoes.D).toBe("O texto combina a descrição dos preparativos com a percepção do narrador.");
+});
+
+test("também reconhece Verdadeiro/Falso, V/F, Sim/Não e Correto/Incorreto", () => {
+  for (const [a, b] of [["Verdadeiro", "Falso"], ["V", "F"], ["Sim", "Não"], ["Correto", "Incorreto"], ["Certo", "Errado"]]) {
+    const q = quizJevSepararQuestao(`Julgue os itens abaixo.\nA) Primeiro item.\n${a} ${b}\nB) Segundo item.\n${a} ${b}`);
+    const j = quizJevDetectarJulgamento(q);
+    expect(j.julgamento).toBe(true);
+    expect(j.opcoes.A).toBe("Primeiro item.");
+  }
+});
+
+test("questão comum de escolha única NÃO vira julgamento", () => {
+  const q = quizJevDetectarJulgamento(quizJevSepararQuestao("Qual a capital?\nA) Sydney\nB) Canberra\nC) Perth"));
+  expect(q.julgamento).toBeUndefined();
+  expect(q.opcoes.B).toBe("Canberra");
+});
+
+test("alternativa que apenas termina com 'sim' ou 'certo' no meio da frase não é julgamento", () => {
+  const q = quizJevDetectarJulgamento(quizJevSepararQuestao("Qual afirmação?\nA) Ele disse que sim\nB) Ela estava certa\nC) Nada disso"));
+  expect(q.julgamento).toBeUndefined();
+  expect(q.opcoes.A).toBe("Ele disse que sim");
+});
+
+test("só uma alternativa com Certo/Errado entre várias: não é julgamento", () => {
+  const q = quizJevDetectarJulgamento(quizJevSepararQuestao("Pergunta?\nA) Um\nB) Dois Certo Errado\nC) Três\nD) Quatro"));
+  expect(q.julgamento).toBeUndefined();
+});
+
+test("pedido de julgamento: uma pergunta sim/não por afirmativa, sem escolha única", () => {
+  const q = quizJevDetectarJulgamento(quizJevSepararQuestao(PROVA_CERTO_ERRADO));
+  const p = quizJevMontarPedidoJev({ pergunta: q.pergunta, opcoes: q.opcoes, ordem: q.ordem, julgamento: true, imagem: null });
+  expect(p.julgamento).toBe(true);
+  expect(p.corpo.questions.resposta).toBeUndefined();
+  expect(Object.keys(p.corpo.questions)).toEqual(["alt_A", "alt_B", "alt_C", "alt_D"]);
+  expect(p.corpo.questions.alt_C.type).toBe("noul");
+  expect(p.corpo.questions.alt_C.instructions).toContain("C");
+  expect(Object.keys(p.corpo.questions.alt_C.criteria)).toEqual(["true", "false"]);
+  expect(p.corpo.questions.alt_C.criteria.true).toContain("foco narrativo");
+  expect(p.corpo.state).toBe(q.pergunta);
+});
+
+test("interpreta o julgamento: certo quando a probabilidade de 'true' passa de 50%", () => {
+  const opcoes = { A: "Primeira", B: "Segunda", C: "Terceira", D: "Quarta" };
+  const bruto = { answers: { alt_A: { type: "noul", noul: 0.1 }, alt_B: { type: "noul", noul: 0.05 }, alt_C: { type: "noul", noul: 0.92 }, alt_D: { type: "noul", noul: 0.8 } } };
+  const d = quizJevInterpretarRespostaJev(bruto, opcoes, false, true);
+  expect(d.kind).toBe("julgamento");
+  expect(d.itens.map((i) => [i.label, i.certo])).toEqual([["A", false], ["B", false], ["C", true], ["D", true]]);
+  expect(d.itens[2].prob).toBeCloseTo(0.92);
+  expect(d.itens[0].texto).toBe("Primeira");
+  expect(d.source).toBe("jev");
+});
+
+test("julgamento com afirmativa sem resposta do Jev é erro (não chuta)", () => {
+  const opcoes = { A: "x", B: "y" };
+  expect(() => quizJevInterpretarRespostaJev({ answers: { alt_A: { noul: 0.9 } } }, opcoes, false, true)).toThrow();
+  expect(() => quizJevInterpretarRespostaJev({}, opcoes, false, true)).toThrow();
 });
 
 // ---- Erros HTTP ----

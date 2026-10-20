@@ -725,11 +725,20 @@ function quizJevImagemParaModo(img) {
 // {raw, imageBase64?, imageMime?} -> {jev: pedido}. Lança Error (com texto pro
 // card) quando não há como perguntar ao Jev.
 function quizJevPayloadJev(payload) {
-  var questao = quizJevSepararQuestao(payload.raw);
+  // Afirmativas a julgar (Certo/Errado em cada alternativa) ou escolha única.
+  var questao = quizJevDetectarJulgamento(quizJevSepararQuestao(payload.raw));
   var imagem = payload.imageBase64 ? { base64: payload.imageBase64, mime: payload.imageMime } : null;
   // Sem alternativas separadas mas com imagem, o texto vai como contexto (curto: é só uma legenda).
   var pergunta = questao ? questao.pergunta : String(payload.raw).slice(0, 600);
-  return { jev: quizJevMontarPedidoJev({ pergunta: pergunta, opcoes: questao ? questao.opcoes : null, imagem: imagem }) };
+  return {
+    jev: quizJevMontarPedidoJev({
+      pergunta: pergunta,
+      opcoes: questao ? questao.opcoes : null,
+      ordem: questao ? questao.ordem : null,
+      julgamento: !!(questao && questao.julgamento),
+      imagem: imagem,
+    }),
+  };
 }
 
 function quizJevTemBytesDiretos(elemento) {
@@ -795,7 +804,7 @@ function quizJevChamarJev(pedido) {
         if (!res.ok) erro = new Error(quizJevMensagemHttpJev(res.status));
         else {
           try {
-            return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico);
+            return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico, pedido.julgamento);
           } catch (e) {
             erro = e;
           }
@@ -840,6 +849,7 @@ function quizJevMensagemRelay(payload) {
         corpo: payload.jev.corpo,
         opcoes: payload.jev.opcoes,
         generico: payload.jev.generico,
+        julgamento: payload.jev.julgamento,
         precisaHeaderImagem: payload.jev.precisaHeaderImagem,
       },
     };

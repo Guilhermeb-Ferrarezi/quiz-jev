@@ -53,9 +53,40 @@ function removerComentarios(codigo) {
 function minificar(codigo) {
   if (typeof Bun !== "undefined") {
     const t = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minifyIdentifiers: true, minifySyntax: false });
-    return t.transformSync(codigo).trim();
+    return encurtarNomes(t.transformSync(codigo).trim());
   }
   return removerComentarios(codigo);
+}
+
+// O minificador do Bun não renomeia as funções e variáveis de topo do IIFE, e este
+// código tem uns 130 nomes longos (quizJevMontarCarregando…) usados centenas de
+// vezes: encurtá-los tira uns 7 KB do link. Todos têm o prefixo `quizJev` ou
+// `QUIZ_JEV_` e a regex só casa o nome INTEIRO (`\b`), então `__quizJevTela` (que
+// começa com `_`) e strings como "quizjev-pronto" ficam como estão. O mesmo mapa
+// vale para o texto todo — inclusive o CSS (@keyframes quizJevIn) —, então
+// definição e uso continuam iguais. Mais usado = nome mais curto.
+function encurtarNomes(codigo) {
+  const contagem = new Map();
+  for (const m of codigo.matchAll(/\b(?:quizJev|QUIZ_JEV_)[A-Za-z0-9_]*/g)) contagem.set(m[0], (contagem.get(m[0]) || 0) + 1);
+  // Nomes curtos já existentes no código (ex.: `$a`) não podem ser reutilizados.
+  const ocupados = new Set(codigo.match(/\$[A-Za-z0-9_]*/g) || []);
+  const alfabeto = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let n = 0;
+  function proximoNome() {
+    for (;;) {
+      let i = n++;
+      let nome = "";
+      do {
+        nome = alfabeto[i % alfabeto.length] + nome;
+        i = Math.floor(i / alfabeto.length) - 1;
+      } while (i >= 0);
+      nome = "$" + nome;
+      if (!ocupados.has(nome)) return nome;
+    }
+  }
+  const mapa = new Map();
+  for (const [nome] of [...contagem].sort((a, b) => b[1] * b[0].length - a[1] * a[0].length)) mapa.set(nome, proximoNome());
+  return codigo.replace(/\b(?:quizJev|QUIZ_JEV_)[A-Za-z0-9_]*/g, (nome) => mapa.get(nome));
 }
 
 function ler(nome) {

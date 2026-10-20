@@ -19,13 +19,20 @@ var QUIZ_JEV_ROTULOS_GENERICOS = ["A", "B", "C", "D", "E"];
 // Rótulo no começo da linha: "A)", "(a", "1.", "3 -", "b:".
 var QUIZ_JEV_RE_ROTULO = /^\s*\(?([A-Ea-e]|[1-9])\s*[\)\.\-:]\s+(.*)$/;
 
+// Cabeçalho que as plataformas de prova põem em volta da questão ("Questão 01 de
+// 06", "10 PONTOS"): não faz parte do enunciado.
+// A LINHA INTEIRA tem que ser só isso (um ou os dois, em qualquer ordem): uma frase
+// do enunciado que cite "questão 2 de 6" não é cortada.
+// Os trechos podem vir colados ("de 0610 PONTOS"): o espaço entre eles é opcional.
+var QUIZ_JEV_RE_RUIDO = /^(?:quest[aã]o\s+\d+\s+de\s+\d+|\d+\s*pontos?)(?:\s*(?:quest[aã]o\s+\d+\s+de\s+\d+|\d+\s*pontos?))*$/i;
+
 function quizJevLimparLinhas(raw) {
   var linhas = String(raw).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   var saida = [];
   for (var i = 0; i < linhas.length; i++) {
     var l = linhas[i].replace(/^\s+|\s+$/g, "");
     l = l.replace(/^[•·–—*\s]+/, "").replace(/\s+$/, "");
-    if (l) saida.push(l);
+    if (l && !QUIZ_JEV_RE_RUIDO.test(l)) saida.push(l);
   }
   return saida;
 }
@@ -76,6 +83,36 @@ function quizJevSepararQuestao(raw) {
   return quizJevSepararComRotulo(linhas) || quizJevSepararSemRotulo(linhas);
 }
 
+// ---- Afirmativas para julgar ----
+// Algumas provas não pedem "escolha uma": cada alternativa é uma afirmativa e o
+// aluno marca Certo/Errado (ou Verdadeiro/Falso…) em cada uma. No texto
+// selecionado, isso aparece como "Certo Errado" depois de cada afirmativa.
+// Exige o PAR no fim do texto ("sim" sozinho ou "certa" no meio da frase não conta).
+var QUIZ_JEV_RE_PAR_JULGAMENTO = /\s+(certo|verdadeiro|v|sim|correto)\s*[\/|,\-]?\s*(errado|falso|f|n[ãa]o|incorreto)\s*$/i;
+var QUIZ_JEV_RE_DICA_JULGAMENTO = /(certas?\s+ou\s+erradas?|verdadeir[oa]s?\s+ou\s+fals[oa]s?|certo\s+ou\s+errado|v\s+ou\s+f)\b/i;
+
+// Recebe o resultado de quizJevSepararQuestao. Se for um conjunto de afirmativas
+// a julgar, devolve a questão com `julgamento: true` e o texto de cada afirmativa
+// já sem o "Certo Errado"; senão, devolve a mesma questão (ou null).
+function quizJevDetectarJulgamento(questao) {
+  if (!questao) return null;
+  var total = questao.ordem.length;
+  var comPar = 0;
+  var limpas = {};
+  for (var i = 0; i < total; i++) {
+    var rotulo = questao.ordem[i];
+    var texto = questao.opcoes[rotulo];
+    var sem = texto.replace(QUIZ_JEV_RE_PAR_JULGAMENTO, "");
+    if (sem !== texto) comPar++;
+    limpas[rotulo] = sem;
+  }
+  var maioria = comPar >= Math.max(2, Math.ceil(total * 0.75));
+  // Sem o "Certo Errado" no texto (a página pode não incluí-lo na seleção), vale o
+  // que o enunciado diz.
+  if (!maioria && !QUIZ_JEV_RE_DICA_JULGAMENTO.test(questao.pergunta)) return questao;
+  return { pergunta: questao.pergunta, opcoes: maioria ? limpas : questao.opcoes, ordem: questao.ordem, julgamento: true };
+}
+
 function quizJevFormatoDaImagem(mime) {
   if (mime === "image/png") return "png";
   if (mime === "image/jpeg" || mime === "image/jpg") return "jpeg";
@@ -104,6 +141,8 @@ function quizJevMontarPedidoJev(entrada) {
     opcoes = {};
     for (var i = 0; i < QUIZ_JEV_ROTULOS_GENERICOS.length; i++) opcoes[QUIZ_JEV_ROTULOS_GENERICOS[i]] = QUIZ_JEV_ROTULOS_GENERICOS[i];
   }
+
+  if (entrada.julgamento) return quizJevMontarPedidoJulgamento(entrada, opcoes);
 
   var criterios = {};
   if (generico) {
@@ -141,10 +180,53 @@ function quizJevMontarPedidoJev(entrada) {
   return { corpo: corpo, opcoes: opcoes, generico: generico, precisaHeaderImagem: !!entrada.imagem };
 }
 
+// Uma pergunta sim/não ("noul") por afirmativa, na MESMA chamada: o Jev devolve,
+// pra cada uma, a probabilidade de "true" (a afirmativa estar certa).
+function quizJevMontarPedidoJulgamento(entrada, opcoes) {
+  var ordem = entrada.ordem || Object.keys(opcoes);
+  var perguntas = {};
+  for (var i = 0; i < ordem.length; i++) {
+    var r = ordem[i];
+    perguntas["alt_" + r] = {
+      type: "noul",
+      instructions: "A afirmativa " + r + " está correta?",
+      criteria: {
+        "true": "a afirmativa «" + opcoes[r] + "» está correta",
+        "false": "a afirmativa «" + opcoes[r] + "» está incorreta",
+      },
+    };
+  }
+  var corpo = { model: QUIZ_JEV_MODELO, state: entrada.pergunta || "", questions: perguntas };
+  if (entrada.imagem) {
+    var formato = quizJevFormatoDaImagem(entrada.imagem.mime);
+    if (!formato) throw new Error("O Jev só aceita imagem PNG ou JPEG.");
+    var marcador = quizJevMarcadorDeImagem();
+    corpo.state = entrada.pergunta ? [entrada.pergunta, marcador] : [marcador];
+    corpo.assets = {};
+    corpo.assets[marcador] = { type: "image", format: formato, data_base64: entrada.imagem.base64 };
+  }
+  return { corpo: corpo, opcoes: opcoes, ordem: ordem, generico: false, julgamento: true, precisaHeaderImagem: !!entrada.imagem };
+}
+
+function quizJevInterpretarJulgamento(bruto, opcoes) {
+  var respostas = (bruto && bruto.answers) || {};
+  var itens = [];
+  for (var r in opcoes) {
+    if (!Object.prototype.hasOwnProperty.call(opcoes, r)) continue;
+    var item = respostas["alt_" + r];
+    // Formato medido em produção: {"type":"noul","noul":0.86} — probabilidade de "true".
+    if (!item || typeof item.noul !== "number") throw new Error("O Jev não respondeu a afirmativa " + r + ".");
+    itens.push({ label: r, texto: opcoes[r], certo: item.noul >= 0.5, prob: item.noul });
+  }
+  if (!itens.length) throw new Error("O Jev respondeu num formato inesperado.");
+  return { kind: "julgamento", itens: itens, source: "jev", parsed: { options: opcoes } };
+}
+
 // Converte a resposta do Jev no objeto que o card (quizJevMontarResposta)
 // espera. Lança Error se a resposta não serve — melhor erro que uma letra que
 // não existe na prova.
-function quizJevInterpretarRespostaJev(bruto, opcoes, generico) {
+function quizJevInterpretarRespostaJev(bruto, opcoes, generico, julgamento) {
+  if (julgamento) return quizJevInterpretarJulgamento(bruto, opcoes);
   var item = bruto && bruto.answers && bruto.answers.resposta;
   if (!item) throw new Error("O Jev respondeu num formato inesperado.");
   var probs = item.probabilities || {};
@@ -200,6 +282,7 @@ function quizJevMensagemHttpJev(status) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     quizJevSepararQuestao: quizJevSepararQuestao,
+    quizJevDetectarJulgamento: quizJevDetectarJulgamento,
     quizJevMontarPedidoJev: quizJevMontarPedidoJev,
     quizJevInterpretarRespostaJev: quizJevInterpretarRespostaJev,
     quizJevMensagemHttpJev: quizJevMensagemHttpJev,

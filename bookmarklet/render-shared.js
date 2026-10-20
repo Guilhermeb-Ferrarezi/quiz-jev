@@ -50,6 +50,12 @@ var QUIZ_JEV_CSS = [
   ".opcao-marcada { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }",
   ".opcao-letra { font-weight: 700; flex: 0 0 auto; }",
   ".opcao-texto { flex: 1; color: #3f3f46; }",
+  ".julga { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; font-size: 13px; }",
+  ".veredito { flex: 0 0 auto; min-width: 54px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; }",
+  ".veredito.certo { background: #dcfce7; color: #166534; }",
+  ".veredito.errado { background: #fee2e2; color: #991b1b; }",
+  ".veredito.incerto { outline: 1px dashed currentColor; outline-offset: 1px; }",
+  ".julga-pct { flex: 0 0 auto; font-size: 11px; color: #71717a; }",
   ".barras { margin-top: 10px; display: grid; gap: 3px; }",
   ".barra { display: grid; grid-template-columns: 18px 1fr 38px; gap: 6px; align-items: center; font-size: 12px; color: #52525b; }",
   ".barra i { display: block; height: 6px; border-radius: 3px; background: #a1a1aa; width: 0; transition: width 420ms cubic-bezier(.16,1,.3,1); }",
@@ -71,7 +77,7 @@ var QUIZ_JEV_CSS = [
   ".pergunta-dica { margin-top: 6px; font-size: 11px; color: #a1a1aa; }",
   ".botao-relay { margin-top: 10px; display: inline-block; font: inherit; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 7px; border: 1px solid #2563eb; background: #eff6ff; color: #1d4ed8; cursor: pointer; }",
   ".botao-relay:hover { background: #dbeafe; }",
-  "@media (prefers-color-scheme: dark) { .card { background: #18181b; color: #fafafa; border-color: #3f3f46; } .motivo { color: #d4d4d8; } .badge { background: #3f3f46; color: #e4e4e7; } .badge.claude { background: #4c1d95; color: #ddd6fe; } .badge.imagem { background: #14532d; color: #bbf7d0; } .carregando { color: #60a5fa; } .card.carregando-ativo::after { box-shadow: inset 0 0 0 1.5px rgba(96,165,250,.9), 0 0 16px rgba(96,165,250,.35); } .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); } .progresso { background: #3f3f46; } .dica { border-color: #3f3f46; } .dica kbd { background: #27272a; border-color: #3f3f46; color: #d4d4d8; } .pergunta-label { color: #d4d4d8; } .pergunta-input { background: #27272a; border-color: #3f3f46; color: #fafafa; } .botao-relay { background: #1e293b; border-color: #60a5fa; color: #93c5fd; } .botao-relay:hover { background: #1e3a5f; } }",
+  "@media (prefers-color-scheme: dark) { .card { background: #18181b; color: #fafafa; border-color: #3f3f46; } .motivo { color: #d4d4d8; } .badge { background: #3f3f46; color: #e4e4e7; } .badge.claude { background: #4c1d95; color: #ddd6fe; } .badge.imagem { background: #14532d; color: #bbf7d0; } .opcao-texto { color: #d4d4d8; } .veredito.certo { background: #14532d; color: #bbf7d0; } .veredito.errado { background: #7f1d1d; color: #fecaca; } .julga-pct { color: #a1a1aa; } .carregando { color: #60a5fa; } .card.carregando-ativo::after { box-shadow: inset 0 0 0 1.5px rgba(96,165,250,.9), 0 0 16px rgba(96,165,250,.35); } .card.carregando-ativo::before { background: linear-gradient(115deg, transparent 35%, rgba(96,165,250,.18) 50%, transparent 65%); } .progresso { background: #3f3f46; } .dica { border-color: #3f3f46; } .dica kbd { background: #27272a; border-color: #3f3f46; color: #d4d4d8; } .pergunta-label { color: #d4d4d8; } .pergunta-input { background: #27272a; border-color: #3f3f46; color: #fafafa; } .botao-relay { background: #1e293b; border-color: #60a5fa; color: #93c5fd; } .botao-relay:hover { background: #1e3a5f; } }",
   "@media (prefers-reduced-motion: reduce) { .card, .card.fechando, .card.erro-anim, .letra-pop, .letra-item, .item-cascata { animation: none !important; } .card.carregando-ativo::before { animation: none !important; opacity: 0; } .pontos i, .card.carregando-ativo::after { animation: none !important; } .barra i, .progresso i { transition: none !important; } }"
 ].join("\n");
 
@@ -151,7 +157,43 @@ function quizJevDica(texto) {
 // Mesma lógica de src/content.js:mostrarResposta, adaptada pra sem cascata de
 // altura animada (o bookmarklet troca o conteúdo de uma vez, sem a
 // transição de altura suave da extensão — simplificação deliberada).
+// Afirmativas a julgar (Certo/Errado em cada alternativa): uma linha por afirmativa
+// com o veredito e a confiança. Abaixo de 65% de confiança o selo fica tracejado
+// ("incerto"): vale conferir aquela.
+function quizJevMontarJulgamento(card, d, comImagem, imagemFalhou) {
+  card.classList.remove("carregando-ativo");
+  card.classList.add("aberta");
+  var topo = quizJevEl("div", "linha");
+  topo.appendChild(quizJevEl("span", "texto", "Julgue cada afirmativa:"));
+  topo.appendChild(quizJevEl("span", "badge " + (d.source === "claude" ? "claude" : "jev"), d.source === "claude" ? "claude" : "jev"));
+  if (comImagem) topo.appendChild(quizJevEl("span", "badge imagem", "figura"));
+  card.appendChild(topo);
+  var lista = quizJevEl("div", "opcoes-multipla");
+  for (var i = 0; i < d.itens.length; i++) {
+    var it = d.itens[i];
+    var confianca = Math.max(it.prob, 1 - it.prob);
+    var linha = quizJevEl("div", "julga item-cascata");
+    linha.style.animationDelay = i * 60 + "ms";
+    linha.appendChild(quizJevEl("span", "opcao-letra", it.label));
+    var selo = quizJevEl("span", "veredito " + (it.certo ? "certo" : "errado") + (confianca < 0.65 ? " incerto" : ""), it.certo ? "Certo" : "Errado");
+    if (confianca < 0.65) selo.title = "Pouca confiança — vale conferir";
+    linha.appendChild(selo);
+    linha.appendChild(quizJevEl("span", "julga-pct", Math.round(confianca * 100) + "%"));
+    linha.appendChild(quizJevEl("span", "opcao-texto", quizJevTruncar(it.texto, 90)));
+    lista.appendChild(linha);
+  }
+  card.appendChild(lista);
+  if (imagemFalhou) {
+    card.appendChild(quizJevEl("div", "aviso", "Não consegui enviar a figura desta questão — respondida só com o texto."));
+  }
+  card.appendChild(quizJevDica());
+}
+
 function quizJevMontarResposta(card, d, comImagem, imagemFalhou) {
+  if (d.kind === "julgamento") {
+    quizJevMontarJulgamento(card, d, comImagem, imagemFalhou);
+    return;
+  }
   card.classList.remove("carregando-ativo");
   var multipla = d.kind === "multipla";
   var aberta = !multipla && (d.kind === "aberta" || !d.answer);

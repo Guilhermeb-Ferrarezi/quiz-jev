@@ -58,6 +58,18 @@ const PAGINAS = {
     </script></body>`,
   "/texto": `<body style="${estilo}"><div id="q"><p>Qual é a capital da Austrália?</p>
     <p>A) Sydney<br>B) Melbourne<br>C) Canberra<br>D) Perth</p></div></body>`,
+  // Questão de julgar cada afirmativa (Certo/Errado), como a das provas do print.
+  "/julgamento": `<body style="${estilo}"><div id="q">
+    <div style="color:#666">Questão <b>01</b> de 06 <span style="float:right">10 PONTOS</span></div>
+    <p>Diversos elementos estruturais fazem parte da narrativa. Ao analisar o trecho, avalie as afirmativas abaixo e marque se estão certas ou erradas.</p>
+    ${[
+      ["A", "A narrativa se organiza em torno de um tempo presente."],
+      ["B", "O ambiente escolar do internato é o cenário principal."],
+      ["C", "O foco narrativo é construído em primeira pessoa."],
+      ["D", "O texto combina a descrição dos preparativos com a percepção do narrador."],
+    ]
+      .map(([l, t]) => `<div>${l}) ${t}<div><label><input type="radio" name="${l}">Certo</label> <label><input type="radio" name="${l}">Errado</label></div></div>`)
+      .join("")}</div></body>`,
   "/sem-alternativas": `<body style="${estilo}"><div id="q"><p>Explique, com suas palavras, como funciona a fotossíntese.</p>
     <p>Responda em um parágrafo curto.</p><p>Valor: 2 pontos.</p></div></body>`,
 };
@@ -90,6 +102,12 @@ const proxy = Bun.serve({
     pedidosProxy.push({ cabecalhos: Object.fromEntries(req.headers), corpo });
     if (req.headers.get("authorization") !== `Bearer ${CHAVE_JEV_OK}`) {
       return Response.json({ message: "invalid key" }, { status: 401, headers: CORS });
+    }
+    // Afirmativas a julgar: uma pergunta sim/não (noul) por alternativa. C e D certas.
+    if (!corpo.questions.resposta) {
+      const prob = { alt_A: 0.1, alt_B: 0.05, alt_C: 0.92, alt_D: 0.8 };
+      const respostas = Object.fromEntries(Object.keys(corpo.questions).map((k) => [k, { type: "noul", noul: prob[k] ?? 0.5 }]));
+      return Response.json({ model: "jev-1.13.0", answers: respostas }, { headers: CORS });
     }
     const opcoes = Object.keys(corpo.questions.resposta.criteria).filter((k) => k !== "Ilegível");
     const probs = Object.fromEntries(opcoes.map((o) => [o, o === "B" ? 0.9 : 0.1 / (opcoes.length - 1)]));
@@ -208,7 +226,7 @@ async function linhasBrancas(cdp, base64, x0, x1, margemTopo, margemBase) {
 const LER_CARD = `(() => {
   const h = document.getElementById("__quiz-jev-bookmarklet"); if (!h) return null;
   const s = h.shadowRoot, q = (sel) => { const e = s.querySelector(sel); return e ? e.textContent : null; };
-  return { letra: q(".letra"), erro: q(".erro"), texto: q(".card") };
+  return { letra: q(".letra"), erro: q(".erro"), texto: q(".card"), vereditos: [...s.querySelectorAll(".veredito")].map((e) => e.textContent), textos: [...s.querySelectorAll(".julga .opcao-texto")].map((e) => e.textContent) };
 })()`;
 
 // opcoes: { modo: "qz" | "jev", chave, analise(cdp, imagemBase64), aposRodar(cdp) }
@@ -371,6 +389,18 @@ try {
     conferir(Object.values(c.assets)[0].format === "png", "o asset é PNG");
   }
   conferir(jTabela.card?.letra === "B", "o card mostra a alternativa");
+
+  console.log("afirmativas Certo/Errado (como no print): uma pergunta sim/não por alternativa");
+  const jJulga = await cenario("jev-julgamento", "/julgamento", { modo: "jev" });
+  conferir(jJulga.enviou, "chegou ao proxy");
+  if (jJulga.jev) {
+    const c = jJulga.jev.corpo;
+    conferir(!c.questions.resposta && JSON.stringify(Object.keys(c.questions)) === JSON.stringify(["alt_A", "alt_B", "alt_C", "alt_D"]), "uma pergunta sim/não (noul) por afirmativa, sem escolha única");
+    conferir(c.questions.alt_C.criteria.true.includes("foco narrativo") && !/Certo|Errado/.test(c.questions.alt_C.criteria.true), "o texto da afirmativa vai sem o 'Certo Errado'");
+    conferir(typeof c.state === "string" && c.state.startsWith("Diversos elementos") && !c.state.includes("PONTOS"), `o enunciado vai sem o cabeçalho da plataforma (começa com ${JSON.stringify(String(c.state).slice(0, 60))})`);
+  }
+  conferir(JSON.stringify(jJulga.card?.vereditos) === JSON.stringify(["Errado", "Errado", "Certo", "Certo"]), `o card mostra Errado, Errado, Certo, Certo (${JSON.stringify(jJulga.card?.vereditos)})`);
+  conferir(jJulga.card?.textos?.length === 4 && !/Certo Errado/.test(jJulga.card.textos.join(" ")), "as quatro afirmativas aparecem no card");
 
   console.log("chave recusada (401): mensagem clara no card");
   const jRuim = await cenario("jev-chave-ruim", "/texto", { modo: "jev", chave: "apikey_errada_" + "y".repeat(30) });

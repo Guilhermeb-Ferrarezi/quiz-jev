@@ -129,7 +129,7 @@
         })
         .then(function (data) {
           if (!res.ok) throw new Error(quizJevMensagemHttpJev(res.status));
-          return quizJevInterpretarRespostaJev(data, d.jev.opcoes, d.jev.generico);
+          return quizJevInterpretarRespostaJev(data, d.jev.opcoes, d.jev.generico, d.jev.julgamento);
         });
     });
   }

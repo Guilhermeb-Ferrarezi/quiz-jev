@@ -96,6 +96,16 @@ precisa de servidor: o segundo estágio (LLM), a explicação e a pergunta livre
 mas com imagem, vale A–E mais "Ilegível". Quem precisa dessas coisas usa o
 favorito normal (chave Santos Tech).
 
+**Afirmativas para julgar (Certo/Errado).** Quando cada alternativa é uma
+afirmativa e o aluno marca Certo/Errado (ou Verdadeiro/Falso, V/F, Sim/Não,
+Correto/Incorreto) em cada uma, o favorito percebe — pelo par no fim de cada
+alternativa ou pelo enunciado ("certas ou erradas", "verdadeiras ou falsas") — e
+faz **uma pergunta sim/não ao Jev por afirmativa**, na mesma chamada. O card
+mostra o veredito de cada uma com a confiança; abaixo de 65% o selo fica
+tracejado, avisando que vale conferir. O cabeçalho da plataforma ("Questão 01 de
+06", "10 PONTOS") é descartado do enunciado. Isso só existe no modo Jev: o
+api-go não tem esse tipo.
+
 **Por que existe um proxy.** A API do Jev só libera CORS para a origem do painel
 dela (`Disallowed CORS origin` para qualquer outra), então nenhum navegador a
 chama direto, nem de um site de prova nem do GitHub Pages. O favorito fala com um
