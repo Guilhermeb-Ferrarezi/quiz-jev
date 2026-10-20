@@ -2,7 +2,7 @@
 //   bun test bookmarklet/jev-direto.test.js
 import { test, expect } from "bun:test";
 
-const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento, quizJevResumoDaResposta, quizJevIndiceDoVeredito, quizJevIndiceDaAlternativa } = require("./jev-direto.js");
+const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevAjustarTamanhoJev, quizJevDetectarJulgamento, quizJevResumoDaResposta, quizJevIndiceDoVeredito, quizJevIndiceDaAlternativa } = require("./jev-direto.js");
 
 // ---- Preencher na página: qual botão (radio) clicar ----
 
@@ -358,4 +358,26 @@ test("mensagens de erro do Jev em português, por status", () => {
   expect(quizJevMensagemHttpJev(402)).toContain("limite");
   expect(quizJevMensagemHttpJev(413)).toContain("grande");
   expect(quizJevMensagemHttpJev(500)).toContain("500");
+});
+
+test("o 400 do Jev mostra o motivo que ele devolve", () => {
+  expect(quizJevMensagemHttpJev(400, { detail: { error_type: "api_usage_error", message: "Invalid image dimensions." } })).toBe("O Jev respondeu com erro (HTTP 400). Invalid image dimensions.");
+  expect(quizJevMensagemHttpJev(400, {})).toBe("O Jev respondeu com erro (HTTP 400).");
+});
+
+// ---- Tamanho da imagem aceito pelo Jev ----
+
+test("imagem baixa e larga (tabela) é completada com branco até o mínimo", () => {
+  expect(quizJevAjustarTamanhoJev(640, 280)).toMatchObject({ dw: 640, dh: 280, cw: 640, ch: 300, mudou: true });
+});
+
+test("imagem dentro dos limites passa como está", () => {
+  expect(quizJevAjustarTamanhoJev(900, 500).mudou).toBe(false);
+  expect(quizJevAjustarTamanhoJev(1560, 300).mudou).toBe(false);
+});
+
+test("imagem grande é reduzida ao teto, e depois completada se ficar baixa", () => {
+  expect(quizJevAjustarTamanhoJev(3000, 2000)).toMatchObject({ dw: 1560, dh: 1040, cw: 1560, ch: 1040 });
+  const larga = quizJevAjustarTamanhoJev(3120, 400);
+  expect([larga.dw, larga.dh, larga.ch]).toEqual([1560, 200, 300]);
 });

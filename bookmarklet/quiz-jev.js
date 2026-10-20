@@ -1171,17 +1171,24 @@ function quizJevAdicionarPreencher(card, ctx, d) {
 function quizJevImagemParaModo(img) {
   if (QUIZ_JEV_MODO !== "jev" || !img) return img;
   if (!img.base64) return null;
-  if (img.mime === "image/png" || img.mime === "image/jpeg") return img;
+  var jaAceito = img.mime === "image/png" || img.mime === "image/jpeg";
+  // Toda imagem passa pelo ajuste de tamanho: o Jev recusa lado menor que ~280 px ou
+  // maior que 1568 px (tabela baixa da página dá "Invalid image dimensions").
   return quizJevDecodificar(quizJevBase64ParaBlob(img.base64, img.mime)).then(
     function (decodificada) {
+      var t = quizJevAjustarTamanhoJev(quizJevLargura(decodificada), quizJevAltura(decodificada));
+      if (jaAceito && !t.mudou) return img;
       var canvas = document.createElement("canvas");
-      canvas.width = quizJevLargura(decodificada);
-      canvas.height = quizJevAltura(decodificada);
-      canvas.getContext("2d").drawImage(decodificada, 0, 0);
-      return quizJevCanvasParaBase64ComLimite(quizJevAplicarTetoDeLado(canvas));
+      canvas.width = t.cw;
+      canvas.height = t.ch;
+      var c = canvas.getContext("2d");
+      c.fillStyle = "#fff";
+      c.fillRect(0, 0, t.cw, t.ch);
+      c.drawImage(decodificada, Math.round((t.cw - t.dw) / 2), Math.round((t.ch - t.dh) / 2), t.dw, t.dh);
+      return quizJevCanvasParaBase64ComLimite(canvas);
     },
     function () {
-      return null;
+      return jaAceito ? img : null;
     }
   );
 }

@@ -119,6 +119,22 @@ function quizJevFormatoDaImagem(mime) {
   return null;
 }
 
+// O Jev recusa (HTTP 400 "Invalid image dimensions") imagem com o lado menor abaixo
+// de ~280 px ou o maior acima de 1568 px (medido na API: 900x280 passa, 900x270 não;
+// 1568x500 passa, 1569x500 não). Tabelas largas e baixas caem no primeiro caso.
+// Devolve como desenhar: `dw`x`dh` é a imagem (reduzida se passar do teto) e `cw`x`ch`
+// o quadro final (completado com branco até o mínimo, imagem centralizada).
+var QUIZ_JEV_LADO_MIN_PX = 300;
+var QUIZ_JEV_LADO_MAX_PX = 1560;
+function quizJevAjustarTamanhoJev(w, h) {
+  var escala = Math.min(1, QUIZ_JEV_LADO_MAX_PX / Math.max(w, h));
+  var dw = Math.max(1, Math.round(w * escala));
+  var dh = Math.max(1, Math.round(h * escala));
+  var cw = Math.max(dw, QUIZ_JEV_LADO_MIN_PX);
+  var ch = Math.max(dh, QUIZ_JEV_LADO_MIN_PX);
+  return { dw: dw, dh: dh, cw: cw, ch: ch, mudou: escala !== 1 || cw !== dw || ch !== dh };
+}
+
 function quizJevMarcadorDeImagem() {
   var s = "";
   for (var i = 0; i < 4; i++) s += Math.floor(Math.random() * 0x100000000).toString(16);
@@ -407,7 +423,7 @@ function quizJevMensagemHttpJev(status, corpo) {
   // O Jev costuma explicar o 400 no corpo (campo de erro/mensagem): mostra o começo.
   var detalhe = "";
   if (corpo && typeof corpo === "object") {
-    var bruto = corpo.error || corpo.message || corpo.detail || corpo.errors;
+    var bruto = (corpo.detail && corpo.detail.message) || corpo.error || corpo.message || corpo.detail || corpo.errors;
     if (bruto) detalhe = typeof bruto === "string" ? bruto : JSON.stringify(bruto);
   }
   detalhe = detalhe.replace(/\s+/g, " ");
@@ -423,6 +439,7 @@ if (typeof module !== "undefined" && module.exports) {
     quizJevIndiceDoVeredito: quizJevIndiceDoVeredito,
     quizJevIndiceDaAlternativa: quizJevIndiceDaAlternativa,
     quizJevMontarPedidoJev: quizJevMontarPedidoJev,
+    quizJevAjustarTamanhoJev: quizJevAjustarTamanhoJev,
     quizJevInterpretarRespostaJev: quizJevInterpretarRespostaJev,
     quizJevMensagemHttpJev: quizJevMensagemHttpJev,
   };

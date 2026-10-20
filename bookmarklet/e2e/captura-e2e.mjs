@@ -162,6 +162,11 @@ const pedidosProxy = [];
 // O "Jev" falso: devolve {status, corpo} no formato da API real.
 function jevFalso(corpo, autorizacao) {
   if (autorizacao !== `Bearer ${CHAVE_JEV_OK}`) return { status: 401, corpo: { message: "invalid key" } };
+  // Como o Jev de verdade: lado menor < ~280 px ou maior > 1568 px => 400 "Invalid image dimensions."
+  for (const a of Object.values(corpo.assets || {})) {
+    const { largura, altura } = dimensoesPng(a.data_base64);
+    if (Math.min(largura, altura) < 280 || Math.max(largura, altura) > 1568) return { status: 400, corpo: { detail: { error_type: "api_usage_error", message: "Invalid image dimensions." } } };
+  }
   const perguntas = Object.keys(corpo.questions);
   // Lacunas com dropdown: uma escolha por lacuna. Lacuna 1 -> B (90%), 2 -> C (60%, incerta), demais -> A.
   if (perguntas.every((k) => k.startsWith("lacuna_"))) {
@@ -516,6 +521,12 @@ try {
     conferir(Object.values(c.assets)[0].format === "png", "o asset é PNG");
   }
   conferir(jTabela.card?.letra === "B", "o card mostra a alternativa");
+
+  console.log("imagem baixa (duas figuras 300x120 empilhadas = 300x240): o Jev recusa < 280 px, então vai completada com branco");
+  const jImg = await cenario("jev-imagens", "/imagens", { modo: "jev" });
+  conferir(jImg.enviou && jImg.temImagem, "chegou ao proxy com imagem");
+  if (jImg.imagem?.altura) conferir(Math.min(jImg.imagem.largura, jImg.imagem.altura) >= 300, `a imagem enviada tem lado menor >= 300 (${JSON.stringify(jImg.imagem)})`);
+  conferir(!jImg.card?.erro && !!jImg.card?.letra, `o card mostra a resposta, sem erro (${jImg.card?.erro})`);
 
   console.log("afirmativas Certo/Errado (como no print): uma pergunta sim/não por alternativa");
   const jJulga = await cenario("jev-julgamento", "/julgamento", { modo: "jev" });
