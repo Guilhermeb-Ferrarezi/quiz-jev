@@ -1271,7 +1271,7 @@ function quizJevChamarJev(pedido) {
       })
       .then(function (data) {
         var erro = null;
-        if (!res.ok) erro = new Error(quizJevMensagemHttpJev(res.status));
+        if (!res.ok) erro = new Error(quizJevMensagemHttpJev(res.status, data));
         else {
           try {
             return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico, pedido.julgamento, pedido.lacunas);

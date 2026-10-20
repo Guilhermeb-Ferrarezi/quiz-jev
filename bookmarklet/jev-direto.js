@@ -400,11 +400,19 @@ function quizJevResumoDaResposta(d) {
   return d.answer ? d.answer : "resposta";
 }
 
-function quizJevMensagemHttpJev(status) {
+function quizJevMensagemHttpJev(status, corpo) {
   if (status === 401 || status === 403) return "A chave do Jev foi recusada. Confira se ela está correta.";
   if (status === 402 || status === 429) return "A conta do Jev está sem saldo ou atingiu o limite de uso.";
   if (status === 413) return "A imagem é grande demais para o Jev.";
-  return "O Jev respondeu com erro (HTTP " + status + ").";
+  // O Jev costuma explicar o 400 no corpo (campo de erro/mensagem): mostra o começo.
+  var detalhe = "";
+  if (corpo && typeof corpo === "object") {
+    var bruto = corpo.error || corpo.message || corpo.detail || corpo.errors;
+    if (bruto) detalhe = typeof bruto === "string" ? bruto : JSON.stringify(bruto);
+  }
+  detalhe = detalhe.replace(/\s+/g, " ");
+  if (detalhe.length > 220) detalhe = detalhe.slice(0, 220) + "…";
+  return "O Jev respondeu com erro (HTTP " + status + ")." + (detalhe ? " " + detalhe : "");
 }
 
 if (typeof module !== "undefined" && module.exports) {
