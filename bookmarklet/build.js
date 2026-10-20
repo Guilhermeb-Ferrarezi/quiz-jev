@@ -24,6 +24,7 @@
 //      tratamento especial do bookmarklet).
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const DIR = __dirname;
@@ -50,10 +51,19 @@ function removerComentarios(codigo) {
 // como `"__QUIZ_MODO__" === "jev"`, destruindo os marcadores que a página de
 // instalação (docs/index.html) troca depois. Sem Bun, cai no corte simples de
 // comentários (o código fica maior, mas funciona igual).
-function minificar(codigo) {
+async function minificar(codigo) {
   if (typeof Bun !== "undefined") {
-    const t = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minifyIdentifiers: true, minifySyntax: false });
-    return encurtarNomes(t.transformSync(codigo).trim());
+    // O bundler do Bun renomeia de verdade as variáveis locais (o Bun.Transpiler,
+    // não): é ele que deixa o favorito dentro do limite do link.
+    const tmp = path.join(os.tmpdir(), "quizjev-bundle-" + process.pid + ".js");
+    fs.writeFileSync(tmp, codigo);
+    try {
+      const r = await Bun.build({ entrypoints: [tmp], target: "browser", format: "iife", minify: { whitespace: true, identifiers: true, syntax: false } });
+      if (!r.success) throw new Error("falha ao minificar: " + r.logs.join("\n"));
+      return encurtarNomes((await r.outputs[0].text()).trim());
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
   }
   return removerComentarios(codigo);
 }
@@ -113,7 +123,7 @@ function ler(nome) {
   return fs.readFileSync(path.join(DIR, nome), "utf8");
 }
 
-function main() {
+async function main() {
   const shared = ler("render-shared.js");
   const captura = ler("captura.js");
   const jevDireto = ler("jev-direto.js");
@@ -126,7 +136,12 @@ function main() {
     }
   }
 
-  const embrulhado = minificar("(function(){\n" + removerComentarios(comprimirCss(fonteCompleta)) + "\n})();");
+  // Os blocos `if (typeof module ...) module.exports = {...}` existem só para os testes;
+  // se ficassem, o Bun trataria o bundle como CommonJS e o embrulharia num wrapper que
+  // ninguém chama (o favorito não faria nada).
+  const semExports = fonteCompleta.replace(/^if \(typeof module !== "undefined" && module\.exports\) \{\r?\n[\s\S]*?\r?\n\}\r?\n?/gm, "");
+  if (/module\.exports/.test(semExports.replace(/\/\/.*$/gm, ""))) throw new Error("sobrou module.exports nas fontes — build cancelado");
+  const embrulhado = await minificar("(function(){\n" + removerComentarios(comprimirCss(semExports)) + "\n})();");
   for (const placeholder of ["__QUIZ_KEY__", "__QUIZ_MODO__", "__QUIZ_PROXY__"]) {
     // Se o minificador sumisse com um marcador, o favorito nasceria sem chave/modo.
     if (embrulhado.indexOf('"' + placeholder + '"') === -1) {
@@ -158,4 +173,7 @@ function main() {
   console.log("docs/quiz-render.js gerado (" + Buffer.byteLength(shared, "utf8") + " bytes)");
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

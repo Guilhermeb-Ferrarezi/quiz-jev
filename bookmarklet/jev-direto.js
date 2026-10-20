@@ -328,6 +328,64 @@ function quizJevInterpretarRespostaJev(bruto, opcoes, generico, julgamento, lacu
   };
 }
 
+// ---- Preencher na página: qual botão (radio) clicar ----
+// Só a decisão, sem DOM: o bookmarklet lê os rótulos dos botões da página e
+// pergunta aqui qual deles corresponde à resposta. Na dúvida devolve -1 — melhor
+// não marcar nada do que marcar o botão errado.
+
+// Minúsculas, sem acento nem pontuação: "ERRADO." e "Não" viram "errado" e "nao".
+function quizJevNormalizar(t) {
+  return String(t)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^ | $/g, "");
+}
+
+var QUIZ_JEV_RE_ROTULO_CERTO = /^(certo|certa|verdadeiro|verdadeira|v|sim|correto|correta)$/;
+var QUIZ_JEV_RE_ROTULO_ERRADO = /^(errado|errada|falso|falsa|f|nao|incorreto|incorreta)$/;
+
+// `rotulos`: texto de cada botão de um grupo (Certo/Errado, V/F…). Devolve o
+// índice do botão do veredito (certo: true/false), ou -1.
+function quizJevIndiceDoVeredito(rotulos, certo) {
+  var padrao = certo ? QUIZ_JEV_RE_ROTULO_CERTO : QUIZ_JEV_RE_ROTULO_ERRADO;
+  for (var i = 0; i < rotulos.length; i++) if (padrao.test(quizJevNormalizar(rotulos[i]))) return i;
+  return -1;
+}
+
+// `rotulos`: texto de cada botão de alternativa. Devolve o índice do botão da
+// alternativa `letra`, ou -1. Procura, nesta ordem: o texto exato da opção (com
+// ou sem o "A)" na frente), um rótulo que a contém, só a letra, e por fim a
+// posição — esta só quando os botões não têm texto nenhum e são tantos quanto as
+// opções.
+function quizJevIndiceDaAlternativa(rotulos, opcoes, letra) {
+  var alvo = quizJevNormalizar(opcoes[letra] || "");
+  var limpos = [];
+  for (var i = 0; i < rotulos.length; i++) {
+    limpos.push(quizJevNormalizar(String(rotulos[i]).replace(/^\s*\(?([A-Ea-e]|[1-9])\s*[\)\.\-:]\s+/, "")));
+  }
+  var achados = [];
+  var j;
+  for (j = 0; j < limpos.length; j++) if (alvo && limpos[j] === alvo) achados.push(j);
+  if (achados.length === 1) return achados[0];
+  if (achados.length > 1) return -1;
+  if (alvo.length >= 2) {
+    for (j = 0; j < limpos.length; j++) if (limpos[j].indexOf(alvo) !== -1) achados.push(j);
+    if (achados.length === 1) return achados[0];
+    if (achados.length > 1) return -1;
+  }
+  var soLetra = quizJevNormalizar(letra);
+  for (j = 0; j < rotulos.length; j++) if (quizJevNormalizar(rotulos[j]) === soLetra) achados.push(j);
+  if (achados.length === 1) return achados[0];
+  var chaves = Object.keys(opcoes);
+  var todosVazios = rotulos.length > 0;
+  for (j = 0; j < rotulos.length; j++) if (quizJevNormalizar(rotulos[j]) !== "") todosVazios = false;
+  if (todosVazios && rotulos.length === chaves.length) return chaves.indexOf(letra);
+  return -1;
+}
+
 // Texto curto da resposta, pra pastilha do card recolhido ("Quiz Jev · B"). Serve
 // aos dois modos (api-go e Jev): conhece todos os tipos de resposta do card.
 function quizJevResumoDaResposta(d) {
@@ -354,6 +412,8 @@ if (typeof module !== "undefined" && module.exports) {
     quizJevSepararQuestao: quizJevSepararQuestao,
     quizJevDetectarJulgamento: quizJevDetectarJulgamento,
     quizJevResumoDaResposta: quizJevResumoDaResposta,
+    quizJevIndiceDoVeredito: quizJevIndiceDoVeredito,
+    quizJevIndiceDaAlternativa: quizJevIndiceDaAlternativa,
     quizJevMontarPedidoJev: quizJevMontarPedidoJev,
     quizJevInterpretarRespostaJev: quizJevInterpretarRespostaJev,
     quizJevMensagemHttpJev: quizJevMensagemHttpJev,

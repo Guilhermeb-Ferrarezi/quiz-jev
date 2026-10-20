@@ -99,11 +99,15 @@ const PAGINAS = {
         var ul = document.createElement("ul");
         ul.setAttribute("role", "listbox"); ul.id = id; ul.tabIndex = -1;
         ul.style.cssText = "position:fixed;left:30px;top:60px;background:#fff;border:1px solid #999;margin:0;padding:4px;list-style:none";
-        OPCOES.forEach(function (t) { var li = document.createElement("li"); li.setAttribute("role", "option"); li.textContent = t; ul.appendChild(li); });
+        function fechar() { caixa.setAttribute("aria-expanded", "false"); setTimeout(function () { raiz.remove(); }, 120); }
+        OPCOES.forEach(function (t) {
+          var li = document.createElement("li"); li.setAttribute("role", "option"); li.textContent = t;
+          li.addEventListener("click", function () { caixa.querySelector("span").textContent = t; window.__escolhas = (window.__escolhas || 0) + 1; fechar(); });
+          ul.appendChild(li);
+        });
         raiz.appendChild(ul);
         document.body.appendChild(raiz);
         caixa.setAttribute("aria-expanded", "true");
-        function fechar() { caixa.setAttribute("aria-expanded", "false"); setTimeout(function () { raiz.remove(); }, 120); }
         raiz.addEventListener("keydown", function (e) { if (e.key === "Escape") fechar(); });
         raiz.querySelector(".MuiBackdrop-root").addEventListener("click", fechar);
       }
@@ -116,6 +120,9 @@ const PAGINAS = {
   "/lacunas-select": `<body style="${estilo}"><div id="q"><p>Complete as lacunas do texto escolhendo a opção correta:</p>
     <p>O gato <select><option value="">escolha</option><option value="1">mia</option><option value="2">late</option><option value="3">canta</option></select> e o cão
     <select><option value="">escolha</option><option value="1">mia</option><option value="2">late</option><option value="3">canta</option></select> alto.</p></div></body>`,
+  // Escolha única com botões de rádio (um grupo só), alternativas no rótulo.
+  "/radios-unica": `<body style="${estilo}"><div id="q"><p>Qual é a capital da Austrália?</p>
+    ${["A) Sydney", "B) Melbourne", "C) Canberra", "D) Perth"].map((t) => `<div><label><input type="radio" name="q1"> ${t}</label></div>`).join("")}</div></body>`,
   "/sem-alternativas": `<body style="${estilo}"><div id="q"><p>Explique, com suas palavras, como funciona a fotossíntese.</p>
     <p>Responda em um parágrafo curto.</p><p>Valor: 2 pontos.</p></div></body>`,
 };
@@ -553,6 +560,55 @@ try {
     conferir(c.state.includes("O gato [1] e o cão [2] alto."), `o texto vai com os marcadores (${JSON.stringify(String(c.state).slice(-45))})`);
   }
   conferir(jSel.card?.numeros?.length === 2, "o card lista as 2 lacunas");
+
+  // Clica em "Preencher na página" no card e devolve a mensagem dele + o estado da página.
+  const preencherEAnalisar = (exprEstado) => async (cdp) =>
+    (
+      await cdp.enviar("Runtime.evaluate", {
+        awaitPromise: true,
+        returnByValue: true,
+        expression: `(async () => {
+          const s = document.getElementById("__quiz-jev-bookmarklet").shadowRoot;
+          const b = s.querySelector(".preencher-area button");
+          if (!b) return { semBotao: true };
+          b.click();
+          const m = s.querySelector(".preencher-area .motivo");
+          for (let i = 0; i < 100 && !m.textContent; i++) await new Promise((r) => setTimeout(r, 100));
+          await new Promise((r) => setTimeout(r, 300));
+          return { status: m.textContent, botao: b.textContent, estado: (${exprEstado}) };
+        })()`,
+      })
+    ).result.value;
+
+  console.log("preencher na página — Certo/Errado: marca os rádios, sem enviar nada");
+  const pJul = await cenario("jev-preencher-julgamento", "/julgamento", {
+    modo: "jev",
+    analisePagina: preencherEAnalisar(`[...document.querySelectorAll('input[type=radio]')].map((r) => r.checked ? r.parentElement.textContent : "-")`),
+  });
+  conferir(JSON.stringify(pJul.pagina?.estado) === JSON.stringify(["-", "Errado", "-", "Errado", "Certo", "-", "Certo", "-"]), `marcou Errado, Errado, Certo, Certo (${JSON.stringify(pJul.pagina?.estado)}; ${pJul.pagina?.status})`);
+  conferir(/Preenchi 4 de 4/.test(pJul.pagina?.status || ""), "o card diz que preencheu 4 de 4 e pede para conferir");
+
+  console.log("preencher na página — lacunas com dropdown (MUI): escolhe cada opção");
+  const pLac = await cenario("jev-preencher-lacunas", "/lacunas", {
+    modo: "jev",
+    analisePagina: preencherEAnalisar(`({ valores: [...document.querySelectorAll('[role="combobox"]')].map((e) => e.textContent), listas: document.querySelectorAll('[role="listbox"]').length, expandidos: document.querySelectorAll('[aria-expanded="true"]').length })`),
+  });
+  conferir(JSON.stringify(pLac.pagina?.estado?.valores) === JSON.stringify(['"por que"', '"porque"', '"porquê"', '"porquê"']), `escolheu as 4 opções (${JSON.stringify(pLac.pagina?.estado?.valores)}; ${pLac.pagina?.status})`);
+  conferir(pLac.pagina?.estado?.listas === 0 && pLac.pagina?.estado?.expandidos === 0, "e não deixou nenhuma lista aberta");
+
+  console.log("preencher na página — lacunas com <select> nativo");
+  const pSel = await cenario("jev-preencher-select", "/lacunas-select", {
+    modo: "jev",
+    analisePagina: preencherEAnalisar(`[...document.querySelectorAll("select")].map((s) => s.selectedIndex)`),
+  });
+  conferir(pSel.pagina?.estado?.length === 2 && pSel.pagina.estado.every((i) => i > 0), `os dois <select> deixaram de estar em 'escolha' (${JSON.stringify(pSel.pagina?.estado)}; ${pSel.pagina?.status})`);
+
+  console.log("preencher na página — escolha única com rádios");
+  const pUni = await cenario("jev-preencher-unica", "/radios-unica", {
+    modo: "jev",
+    analisePagina: preencherEAnalisar(`[...document.querySelectorAll('input[type=radio]')].map((r) => r.checked)`),
+  });
+  conferir(JSON.stringify(pUni.pagina?.estado) === JSON.stringify([false, true, false, false]), `marcou a alternativa B (${JSON.stringify(pUni.pagina?.estado)}; ${pUni.pagina?.status})`);
 
   console.log("card recolhível: clicar na página recolhe (não fecha), pastilha reabre, Alt+W alterna, − esconde, × fecha");
   const etapas = {};

@@ -877,6 +877,18 @@ function quizJevFecharLista(idLista) {
   });
 }
 
+// Abre o dropdown (mousedown, como a biblioteca espera) e devolve a lista de
+// opções, ou null se ela não apareceu. Se a lista já está aberta, só a devolve.
+function quizJevAbrirLista(caixa, idLista) {
+  var aberta = document.getElementById(idLista);
+  if (aberta && aberta.querySelector('[role="option"]')) return Promise.resolve(aberta);
+  caixa.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, view: window }));
+  return quizJevEsperarAte(function () {
+    var l = document.getElementById(idLista);
+    return l && l.querySelector('[role="option"]') ? l : null;
+  }, 1500);
+}
+
 // Opções de UM dropdown, abrindo-o se preciso. Devolve a lista de textos (vazia
 // se não conseguiu). Nunca rejeita; sempre desliga o aviso de "simulando".
 function quizJevLerOpcoesDaCaixa(caixa) {
@@ -894,16 +906,7 @@ function quizJevLerOpcoesDaCaixa(caixa) {
   var idLista = caixa.getAttribute("aria-controls");
   if (!idLista) return Promise.resolve([]);
   window.__quizJevSimulando = true;
-  var lista = document.getElementById(idLista);
-  var abrir = Promise.resolve(lista);
-  if (!lista) {
-    caixa.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, view: window }));
-    abrir = quizJevEsperarAte(function () {
-      var l = document.getElementById(idLista);
-      return l && l.querySelector('[role="option"]') ? l : null;
-    }, 1500);
-  }
-  return abrir
+  return quizJevAbrirLista(caixa, idLista)
     .then(function (l) {
       var textos = l ? quizJevTextosDasOpcoes(l) : [];
       return quizJevFecharLista(idLista).then(function () {
@@ -940,6 +943,224 @@ function quizJevColetarLacunas(range, caixas) {
     if (!ok) return { erro: "Não consegui ler as opções da lacuna " + (listas.length + 1) + ". Abra o dropdown e tente de novo." };
     return { texto: lido.texto, listas: listas };
   });
+}
+
+// ---- Preencher na página ----
+//
+// Só quando o usuário clica no botão do card, e só MARCA as opções: nunca envia nem
+// finaliza a atividade — conferir e enviar é com a pessoa. Na dúvida sobre qual
+// botão é qual, não marca (e diz) em vez de chutar.
+
+// Escolhe `texto` num dropdown: <select> nativo (valor + change) ou de biblioteca
+// (abre, clica na opção, espera fechar). Resolve true se o valor mudou pra isso.
+// Acha o texto no meio das opções. Primeiro igual de verdade (só espaços e caixa
+// normalizados, COM acento: "porque" e "porquê" são opções diferentes); sem acento só
+// se não houver igual. Devolve o índice ou -1.
+function quizJevAcharTexto(textos, texto) {
+  function simples(t) {
+    return String(t).replace(/\s+/g, " ").replace(/^ | $/g, "").toLowerCase();
+  }
+  var i;
+  for (i = 0; i < textos.length; i++) if (simples(textos[i]) === simples(texto)) return i;
+  for (i = 0; i < textos.length; i++) if (quizJevNormalizar(textos[i]) === quizJevNormalizar(texto)) return i;
+  return -1;
+}
+
+function quizJevEscolherNaCaixa(caixa, texto) {
+  var alvo = quizJevNormalizar(texto);
+  if (quizJevTag(caixa) === "SELECT") {
+    var textosSel = [];
+    for (var s = 0; s < caixa.options.length; s++) textosSel.push(caixa.options[s].textContent);
+    var achado = quizJevAcharTexto(textosSel, texto);
+    for (var i = 0; i < caixa.options.length; i++) {
+      if (i !== achado) continue;
+      // O setter nativo, não `.value =`: bibliotecas (React) guardam o valor por fora.
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(caixa, caixa.options[i].value);
+      caixa.dispatchEvent(new Event("input", { bubbles: true }));
+      caixa.dispatchEvent(new Event("change", { bubbles: true }));
+      return Promise.resolve(quizJevNormalizar(caixa.options[caixa.selectedIndex].textContent) === alvo);
+    }
+    return Promise.resolve(false);
+  }
+  var idLista = caixa.getAttribute("aria-controls");
+  if (!idLista) return Promise.resolve(false);
+  var escolhido = null;
+  window.__quizJevSimulando = true;
+  return quizJevAbrirLista(caixa, idLista)
+    .then(function (lista) {
+      var opcoes = lista ? lista.querySelectorAll('[role="option"]') : [];
+      var textos = [];
+      for (var i = 0; i < opcoes.length; i++) textos.push(opcoes[i].textContent);
+      var pos = quizJevAcharTexto(textos, texto);
+      if (pos !== -1) {
+        escolhido = textos[pos];
+        opcoes[pos].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      }
+      return quizJevEsperarAte(function () {
+        return !document.getElementById(idLista);
+      }, 1000);
+    })
+    .then(function () {
+      return escolhido !== null && quizJevAcharTexto([caixa.textContent], escolhido) === 0;
+    })
+    .catch(function () {
+      return false;
+    })
+    .then(function (ok) {
+      window.__quizJevSimulando = false;
+      return ok;
+    });
+}
+
+function quizJevRotuloDoRadio(el) {
+  var t = "";
+  if (el.labels && el.labels.length) t = el.labels[0].textContent;
+  else {
+    var rotulo = el.closest && el.closest("label");
+    t = rotulo ? rotulo.textContent : el.getAttribute("aria-label") || el.textContent || "";
+  }
+  return String(t).replace(/\s+/g, " ").replace(/^ | $/g, "");
+}
+
+// Grupos de botões de rádio dentro de `raiz` (e da seleção), na ordem da página.
+// Agrupa por `name` (ou pelo role="radiogroup" mais próximo).
+function quizJevListarGrupos(raiz, range) {
+  var radios = raiz.querySelectorAll('input[type="radio"], [role="radio"]');
+  var chaves = [];
+  var grupos = [];
+  for (var i = 0; i < radios.length; i++) {
+    var r = radios[i];
+    if (range && !range.intersectsNode(r)) continue;
+    var chave = r.name ? "n:" + r.name : (r.closest && r.closest('[role="radiogroup"]')) || r;
+    var pos = chaves.indexOf(chave);
+    if (pos === -1) {
+      chaves.push(chave);
+      grupos.push({ radios: [], rotulos: [] });
+      pos = chaves.length - 1;
+    }
+    grupos[pos].radios.push(r);
+    grupos[pos].rotulos.push(quizJevRotuloDoRadio(r));
+  }
+  return grupos;
+}
+
+function quizJevMarcado(radio) {
+  return radio.checked === true || radio.getAttribute("aria-checked") === "true";
+}
+
+// Marca o botão `indice` do grupo; true se ficou marcado.
+function quizJevMarcarRadio(grupo, indice) {
+  if (indice < 0) return false;
+  grupo.radios[indice].click();
+  return quizJevMarcado(grupo.radios[indice]);
+}
+
+// Preenche o que o card respondeu. Resolve {feitas, total, erros:[texto…]}.
+function quizJevPreencher(ctx, d) {
+  var raiz = ctx.raiz && ctx.raiz.isConnected ? ctx.raiz : null;
+  var erros = [];
+  var feitas = 0;
+  var total = 0;
+  function pronto() {
+    return { feitas: feitas, total: total, erros: erros };
+  }
+  if (!raiz) return Promise.resolve({ feitas: 0, total: 0, erros: ["A questão saiu da página."] });
+
+  if (d.kind === "lacunas") {
+    var caixas = [];
+    for (var c = 0; c < (ctx.caixas || []).length; c++) if (ctx.caixas[c].isConnected) caixas.push(ctx.caixas[c]);
+    if (caixas.length !== d.itens.length) caixas = quizJevEncontrarLacunas(ctx.range);
+    total = d.itens.length;
+    if (caixas.length !== total) {
+      erros.push("Achei " + caixas.length + " dropdowns para " + total + " lacunas.");
+      return Promise.resolve(pronto());
+    }
+    var cadeia = Promise.resolve();
+    d.itens.forEach(function (item, i) {
+      cadeia = cadeia.then(function () {
+        return quizJevEscolherNaCaixa(caixas[i], item.texto).then(function (ok) {
+          if (ok) feitas++;
+          else erros.push("Lacuna " + item.n + ": não consegui escolher " + item.texto + ".");
+        });
+      });
+    });
+    return cadeia.then(pronto);
+  }
+
+  var grupos = quizJevListarGrupos(raiz, ctx.range);
+  if (d.kind === "julgamento") {
+    // Só os grupos que são de Certo/Errado (ignora outros botões da área).
+    var validos = grupos.filter(function (g) {
+      return quizJevIndiceDoVeredito(g.rotulos, true) !== -1 && quizJevIndiceDoVeredito(g.rotulos, false) !== -1;
+    });
+    total = d.itens.length;
+    if (validos.length !== total) {
+      erros.push("Achei " + validos.length + " grupos de Certo/Errado para " + total + " afirmativas.");
+      return Promise.resolve(pronto());
+    }
+    d.itens.forEach(function (item, i) {
+      if (quizJevMarcarRadio(validos[i], quizJevIndiceDoVeredito(validos[i].rotulos, item.certo))) feitas++;
+      else erros.push("Afirmativa " + item.label + ": não consegui marcar.");
+    });
+    return Promise.resolve(pronto());
+  }
+
+  if (d.kind === "unica" && d.answer) {
+    total = 1;
+    var opcoes = (d.parsed && d.parsed.options) || {};
+    // Um grupo só (as alternativas são os botões dele) ou botões soltos que juntos
+    // somam as opções.
+    var unico = grupos.length === 1 ? grupos[0] : null;
+    if (!unico) {
+      var todos = { radios: [], rotulos: [] };
+      grupos.forEach(function (g) {
+        todos.radios = todos.radios.concat(g.radios);
+        todos.rotulos = todos.rotulos.concat(g.rotulos);
+      });
+      if (todos.radios.length === Object.keys(opcoes).length) unico = todos;
+    }
+    if (!unico) {
+      erros.push("Não achei os botões das alternativas.");
+      return Promise.resolve(pronto());
+    }
+    if (quizJevMarcarRadio(unico, quizJevIndiceDaAlternativa(unico.rotulos, opcoes, d.answer))) feitas++;
+    else erros.push("Não consegui saber qual botão é a alternativa " + d.answer + ".");
+    return Promise.resolve(pronto());
+  }
+  return Promise.resolve({ feitas: 0, total: 0, erros: ["Este tipo de resposta não dá para preencher."] });
+}
+
+function quizJevPodePreencher(d) {
+  return !!d && (d.kind === "lacunas" || d.kind === "julgamento" || (d.kind === "unica" && !!d.answer));
+}
+
+// Botão "Preencher na página" abaixo da resposta, e o resultado logo embaixo.
+function quizJevAdicionarPreencher(card, ctx, d) {
+  if (!quizJevPodePreencher(d) || !ctx.raiz) return;
+  var area = quizJevEl("div", "preencher-area");
+  var botao = document.createElement("button");
+  botao.type = "button";
+  botao.className = "botao-relay";
+  botao.textContent = "Preencher na página";
+  var estado = quizJevEl("div", "motivo");
+  botao.addEventListener("click", function () {
+    botao.disabled = true;
+    botao.textContent = "Preenchendo…";
+    quizJevPreencher(ctx, d).then(function (r) {
+      botao.disabled = false;
+      botao.textContent = "Preencher de novo";
+      estado.textContent = r.erros.length
+        ? "Preenchi " + r.feitas + " de " + r.total + ". " + r.erros.join(" ")
+        : "Preenchi " + r.feitas + " de " + r.total + ". Confira e envie você.";
+      estado.classList.toggle("erro", r.erros.length > 0);
+      quizJevPosicionar(card, ctx.rect);
+    });
+  });
+  area.appendChild(botao);
+  area.appendChild(estado);
+  var dica = card.querySelector(".dica");
+  if (dica) card.insertBefore(area, dica);
+  else card.appendChild(area);
 }
 
 // ---- Modo Jev: imagem e pedido ----
@@ -1309,6 +1530,7 @@ function quizJevAcompanhar(consulta, ctx, payload, comImagem, imagemFalhou, depo
       if (!quizJevAindaAberto(ctx)) return;
       quizJevLimpar(card);
       quizJevMontarResposta(card, data, comImagem, imagemFalhou);
+      quizJevAdicionarPreencher(card, ctx, data);
       quizJevAtualizarMini(card, quizJevResumoDaResposta(data));
       quizJevPosicionar(card, ctx.rect);
     },
@@ -1422,6 +1644,11 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
   quizJevMontarCarregando(card, "Consultando");
   quizJevPosicionar(card, rect);
   var contexto = { raw: raw, imageBase64: null, imageMime: null, imageUrl: null, perguntando: false, card: card, rect: rect };
+  // Pra "Preencher na página": uma cópia da seleção (o clique do usuário a desfaz) e o
+  // elemento que a contém, onde estão os botões e dropdowns da questão.
+  contexto.range = range.cloneRange();
+  var ancestral = range.commonAncestorContainer;
+  contexto.raiz = ancestral.nodeType === Node.ELEMENT_NODE ? ancestral : ancestral.parentElement;
   quizJevCtxAtual = contexto;
 
   var visuais = quizJevEncontrarElementosVisuais(range);
@@ -1454,7 +1681,10 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
       return;
     }
     var payload = { raw: lacunas ? lacunas.texto : raw };
-    if (lacunas) payload.lacunas = lacunas.listas;
+    if (lacunas) {
+      payload.lacunas = lacunas.listas;
+      contexto.caixas = caixas;
+    }
     var temImagem = false;
     var imagemFalhou = false;
     if (img && img.base64) {

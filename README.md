@@ -143,6 +143,16 @@ fica como estava, e quem marca a resposta é você. Os eventos simulados não fe
 o próprio card. Se não achar as lacunas ou ler menos de duas opções, o card diz o
 que faltou em vez de chutar. Só no modo Jev.
 
+**Preencher na página.** Nas respostas de lacunas, Certo/Errado e escolha única, o
+card ganha o botão **Preencher na página**. Só age quando você clica e só **marca**
+as opções (escolhe nos dropdowns e clica nos botões de rádio): nunca envia nem
+finaliza a atividade — conferir e enviar é com você. A comparação de texto é exata
+(com acento: "porque" ≠ "porquê"); sem correspondência exata, tenta sem acento.
+Se não achar os dropdowns/botões na quantidade esperada, não marca nada e diz o
+que faltou. Testado com o padrão MUI, `<select>` nativo e rádios comuns
+(`<input type="radio">` ou `role="radio"`); o HTML real dos botões de
+Certo/Errado da plataforma ainda não foi conferido.
+
 **Atalho de teclado.** Depois do primeiro uso numa página, `Alt+Q` e
 `Alt+Shift+Q` funcionam sem clicar de novo. Para o primeiro uso também sem mouse:
 no Chrome/Edge, deixe o favorito na **primeira posição** da barra e use

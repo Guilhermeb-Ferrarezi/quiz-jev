@@ -2,7 +2,49 @@
 //   bun test bookmarklet/jev-direto.test.js
 import { test, expect } from "bun:test";
 
-const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento, quizJevResumoDaResposta } = require("./jev-direto.js");
+const { quizJevSepararQuestao, quizJevMontarPedidoJev, quizJevInterpretarRespostaJev, quizJevMensagemHttpJev, quizJevDetectarJulgamento, quizJevResumoDaResposta, quizJevIndiceDoVeredito, quizJevIndiceDaAlternativa } = require("./jev-direto.js");
+
+// ---- Preencher na página: qual botão (radio) clicar ----
+
+test("Certo/Errado: acha o botão do veredito pelo texto, em qualquer ordem e grafia", () => {
+  expect(quizJevIndiceDoVeredito(["Certo", "Errado"], true)).toBe(0);
+  expect(quizJevIndiceDoVeredito(["Certo", "Errado"], false)).toBe(1);
+  expect(quizJevIndiceDoVeredito(["Errado", "Certo"], true)).toBe(1);
+  for (const par of [["Verdadeiro", "Falso"], ["V", "F"], ["Sim", "Não"], ["Sim", "Nao"], ["Correto", "Incorreto"], ["certa", "errada"], ["  CERTO ", "ERRADO."]]) {
+    expect(quizJevIndiceDoVeredito(par, true)).toBe(0);
+    expect(quizJevIndiceDoVeredito(par, false)).toBe(1);
+  }
+});
+
+test("'Incorreto' não é confundido com 'Correto' (nem 'Não' com 'Sim')", () => {
+  expect(quizJevIndiceDoVeredito(["Incorreto", "Correto"], true)).toBe(1);
+  expect(quizJevIndiceDoVeredito(["Incorreto", "Correto"], false)).toBe(0);
+});
+
+test("rótulos que não são de Certo/Errado: não chuta (-1)", () => {
+  expect(quizJevIndiceDoVeredito(["A", "B"], true)).toBe(-1);
+  expect(quizJevIndiceDoVeredito(["Talvez", "Quem sabe"], false)).toBe(-1);
+  expect(quizJevIndiceDoVeredito([], true)).toBe(-1);
+});
+
+const OPCOES_AUSTRALIA = { A: "Sydney", B: "Melbourne", C: "Canberra", D: "Perth" };
+
+test("alternativa: acha o botão pelo texto da opção ou pela letra no rótulo", () => {
+  expect(quizJevIndiceDaAlternativa(["A) Sydney", "B) Melbourne", "C) Canberra", "D) Perth"], OPCOES_AUSTRALIA, "C")).toBe(2);
+  expect(quizJevIndiceDaAlternativa(["Sydney", "Melbourne", "Canberra", "Perth"], OPCOES_AUSTRALIA, "C")).toBe(2);
+  expect(quizJevIndiceDaAlternativa(["Perth", "Canberra", "Melbourne", "Sydney"], OPCOES_AUSTRALIA, "C")).toBe(1); // ordem diferente da prova
+  expect(quizJevIndiceDaAlternativa(["a", "b", "c", "d"], OPCOES_AUSTRALIA, "C")).toBe(2); // só a letra
+});
+
+test("alternativa: botões sem texto, mas na mesma quantidade das opções, valem pela ordem", () => {
+  expect(quizJevIndiceDaAlternativa(["", "", "", ""], OPCOES_AUSTRALIA, "D")).toBe(3);
+});
+
+test("alternativa: sem como saber qual botão é, não chuta (-1)", () => {
+  expect(quizJevIndiceDaAlternativa(["", "", ""], OPCOES_AUSTRALIA, "C")).toBe(-1); // 3 botões para 4 opções
+  expect(quizJevIndiceDaAlternativa(["x", "y"], OPCOES_AUSTRALIA, "C")).toBe(-1);
+  expect(quizJevIndiceDaAlternativa(["Sydney", "Sydney do Sul"], { A: "Sydney", B: "Sydney do Sul" }, "A")).toBe(0); // texto exato vence o que só contém
+});
 
 // ---- Resumo da resposta (texto da pastilha com o card recolhido) ----
 
