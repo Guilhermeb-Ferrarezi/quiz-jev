@@ -44,6 +44,20 @@ function removerComentarios(codigo) {
   return mantidas.join("\n");
 }
 
+// Com o Bun, minifica de verdade (espaços e nomes de variáveis): o favorito vira
+// um link `javascript:` e alguns navegadores só aceitam uns 64 KB nele. SEM
+// minifySyntax de propósito: ele poderia "resolver" na hora do build comparações
+// como `"__QUIZ_MODO__" === "jev"`, destruindo os marcadores que a página de
+// instalação (docs/index.html) troca depois. Sem Bun, cai no corte simples de
+// comentários (o código fica maior, mas funciona igual).
+function minificar(codigo) {
+  if (typeof Bun !== "undefined") {
+    const t = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minifyIdentifiers: true, minifySyntax: false });
+    return t.transformSync(codigo).trim();
+  }
+  return removerComentarios(codigo);
+}
+
 function ler(nome) {
   return fs.readFileSync(path.join(DIR, nome), "utf8");
 }
@@ -51,15 +65,23 @@ function ler(nome) {
 function main() {
   const shared = ler("render-shared.js");
   const captura = ler("captura.js");
+  const jevDireto = ler("jev-direto.js");
   const driver = ler("quiz-jev.js");
 
-  const fonteCompleta = shared + "\n" + captura + "\n" + driver;
-  if (fonteCompleta.indexOf("__QUIZ_KEY__") === -1) {
-    throw new Error("placeholder __QUIZ_KEY__ não encontrado nas fontes — build cancelado");
+  const fonteCompleta = shared + "\n" + captura + "\n" + jevDireto + "\n" + driver;
+  for (const placeholder of ["__QUIZ_KEY__", "__QUIZ_MODO__", "__QUIZ_PROXY__"]) {
+    if (fonteCompleta.indexOf(placeholder) === -1) {
+      throw new Error("placeholder " + placeholder + " não encontrado nas fontes — build cancelado");
+    }
   }
 
-  const minificado = removerComentarios(fonteCompleta);
-  const embrulhado = "(function(){\n" + minificado + "\n})();";
+  const embrulhado = minificar("(function(){\n" + removerComentarios(fonteCompleta) + "\n})();");
+  for (const placeholder of ["__QUIZ_KEY__", "__QUIZ_MODO__", "__QUIZ_PROXY__"]) {
+    // Se o minificador sumisse com um marcador, o favorito nasceria sem chave/modo.
+    if (embrulhado.indexOf('"' + placeholder + '"') === -1) {
+      throw new Error("a minificação perdeu o marcador " + placeholder + " — build cancelado");
+    }
+  }
 
   if (!fs.existsSync(DOCS)) fs.mkdirSync(DOCS, { recursive: true });
 
@@ -71,9 +93,13 @@ function main() {
   fs.writeFileSync(path.join(DOCS, "bookmarklet.min.js"), templateJs, "utf8");
 
   fs.writeFileSync(path.join(DOCS, "quiz-render.js"), shared, "utf8");
+  // A janela de ponte (docs/relay.html) interpreta a resposta do Jev com o mesmo código.
+  fs.writeFileSync(path.join(DOCS, "quiz-jev-direto.js"), jevDireto, "utf8");
 
   const bytesBookmarklet = Buffer.byteLength(embrulhado, "utf8");
-  const bytesUrl = Buffer.byteLength(encodeURIComponent(embrulhado.replace("__QUIZ_KEY__", "qz_exemplo")), "utf8") + "javascript:".length;
+  // Mesmo encoding de docs/index.html; chave de exemplo do tamanho de uma chave do Jev (~108).
+  const exemplo = embrulhado.replace("__QUIZ_KEY__", "apikey_" + "x".repeat(101));
+  const bytesUrl = Buffer.byteLength(encodeURI(exemplo).replace(/#/g, "%23"), "utf8") + "javascript:".length;
   console.log("docs/bookmarklet.min.js gerado (" + bytesBookmarklet + " bytes de código; ~" + bytesUrl + " bytes como URL javascript:)");
   console.log("docs/quiz-render.js gerado (" + Buffer.byteLength(shared, "utf8") + " bytes)");
 }

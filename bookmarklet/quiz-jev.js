@@ -26,7 +26,12 @@
 // instalação (docs/index.html) — nunca lida de rede, nunca fica em arquivo
 // nenhum do repositório.
 var QUIZ_KEY = "__QUIZ_KEY__";
-quizJevTemAtalhoT = true;
+// "qz": chave Santos Tech, fala com o api-go (resposta do Jev + segundo estágio).
+// "jev": chave do Jev (TypeSafe), fala com o proxy QUIZ_JEV_PROXY — só escolhe a
+// alternativa, sem explicação nem pergunta livre. Ver bookmarklet/jev-direto.js.
+var QUIZ_JEV_MODO = "__QUIZ_MODO__";
+var QUIZ_JEV_PROXY = "__QUIZ_PROXY__";
+quizJevTemAtalhoT = QUIZ_JEV_MODO !== "jev";
 
 var QUIZ_JEV_API = "https://api.santos-tech.com/quiz/answer";
 var QUIZ_JEV_RELAY = "https://guilhermeb-ferrarezi.github.io/quiz-jev/relay.html";
@@ -694,6 +699,39 @@ function quizJevCapturarDaTela(visuais, range, rect, card, aindaAberto) {
     });
 }
 
+// ---- Modo Jev: imagem e pedido ----
+
+// O Jev só aceita PNG/JPEG. Imagem em outro formato (webp/gif lidos do arquivo
+// original) vira PNG; endereço de imagem (imageUrl) não serve — não há servidor
+// nosso pra baixá-lo — e é descartado. No modo normal, não mexe em nada.
+function quizJevImagemParaModo(img) {
+  if (QUIZ_JEV_MODO !== "jev" || !img) return img;
+  if (!img.base64) return null;
+  if (img.mime === "image/png" || img.mime === "image/jpeg") return img;
+  return quizJevDecodificar(quizJevBase64ParaBlob(img.base64, img.mime)).then(
+    function (decodificada) {
+      var canvas = document.createElement("canvas");
+      canvas.width = quizJevLargura(decodificada);
+      canvas.height = quizJevAltura(decodificada);
+      canvas.getContext("2d").drawImage(decodificada, 0, 0);
+      return quizJevCanvasParaBase64ComLimite(quizJevAplicarTetoDeLado(canvas));
+    },
+    function () {
+      return null;
+    }
+  );
+}
+
+// {raw, imageBase64?, imageMime?} -> {jev: pedido}. Lança Error (com texto pro
+// card) quando não há como perguntar ao Jev.
+function quizJevPayloadJev(payload) {
+  var questao = quizJevSepararQuestao(payload.raw);
+  var imagem = payload.imageBase64 ? { base64: payload.imageBase64, mime: payload.imageMime } : null;
+  // Sem alternativas separadas mas com imagem, o texto vai como contexto (curto: é só uma legenda).
+  var pergunta = questao ? questao.pergunta : String(payload.raw).slice(0, 600);
+  return { jev: quizJevMontarPedidoJev({ pergunta: pergunta, opcoes: questao ? questao.opcoes : null, imagem: imagem }) };
+}
+
 function quizJevTemBytesDiretos(elemento) {
   return QUIZ_JEV_TAGS_COM_BYTES.indexOf(quizJevTag(elemento)) !== -1;
 }
@@ -733,7 +771,43 @@ function quizJevResolverImagem(visuais, range, rect, card, aindaAberto) {
 }
 
 // ---- Chamada à API ----
+
+// Endereço que recebe a consulta: o api-go (modo "qz") ou o proxy do Jev.
+function quizJevUrlApi() {
+  return QUIZ_JEV_MODO === "jev" ? QUIZ_JEV_PROXY.replace(/\/+$/, "") + "/v1/systemone" : QUIZ_JEV_API;
+}
+
+// Modo Jev: `payload.jev` é o pedido já montado (ver quizJevPayloadJev). A
+// resposta já volta no formato do card, e um erro de interpretação conta como
+// resposta do servidor (quizJevApiError) — não como falha de rede/CSP, que
+// mandaria tentar a ponte à toa.
+function quizJevChamarJev(pedido) {
+  var cabecalhos = { "Content-Type": "application/json", Authorization: "Bearer " + QUIZ_KEY };
+  if (pedido.precisaHeaderImagem) cabecalhos["TypeSafe-Danger-Zone-Images"] = "true";
+  return fetch(quizJevUrlApi(), { method: "POST", headers: cabecalhos, body: JSON.stringify(pedido.corpo) }).then(function (res) {
+    return res
+      .json()
+      .catch(function () {
+        return {};
+      })
+      .then(function (data) {
+        var erro = null;
+        if (!res.ok) erro = new Error(quizJevMensagemHttpJev(res.status));
+        else {
+          try {
+            return quizJevInterpretarRespostaJev(data, pedido.opcoes, pedido.generico);
+          } catch (e) {
+            erro = e;
+          }
+        }
+        erro.quizJevApiError = true;
+        throw erro;
+      });
+  });
+}
+
 function quizJevChamarApi(payload) {
+  if (payload.jev) return quizJevChamarJev(payload.jev);
   return fetch(QUIZ_JEV_API, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Quiz-Key": QUIZ_KEY },
@@ -758,6 +832,18 @@ function quizJevChamarApi(payload) {
 
 // Mensagem que leva a consulta pra janela relay (chave inclusa).
 function quizJevMensagemRelay(payload) {
+  if (payload.jev) {
+    return {
+      key: QUIZ_KEY,
+      jev: {
+        url: quizJevUrlApi(),
+        corpo: payload.jev.corpo,
+        opcoes: payload.jev.opcoes,
+        generico: payload.jev.generico,
+        precisaHeaderImagem: payload.jev.precisaHeaderImagem,
+      },
+    };
+  }
   var msg = { raw: payload.raw, key: QUIZ_KEY };
   if (payload.ask) msg.ask = payload.ask;
   if (payload.imageBase64) {
@@ -792,7 +878,7 @@ function quizJevSondar() {
     return Promise.resolve(window.__quizJevViaPonte);
   }
   if (!window.__quizJevSondagem) {
-    window.__quizJevSondagem = fetch(QUIZ_JEV_API, { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit" }).then(
+    window.__quizJevSondagem = fetch(quizJevUrlApi(), { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit" }).then(
       function () {
         window.__quizJevViaPonte = false;
         return false;
@@ -1038,6 +1124,7 @@ function quizJevAbrirRelay(payloadOuPromise, janela) {
     enviado = true;
     window.removeEventListener("message", handler);
     Promise.resolve(payloadOuPromise).then(function (payload) {
+      if (!payload) return;
       w.postMessage(quizJevMensagemRelay(payload), QUIZ_JEV_RELAY_ORIGIN);
     });
   };
@@ -1081,7 +1168,7 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
   };
   var pImagem = visuais.length ? quizJevResolverImagem(visuais, range, rect, card, aindaAberto) : Promise.resolve(null);
 
-  pImagem.then(function (img) {
+  pImagem.then(quizJevImagemParaModo).then(function (img) {
     if (!document.getElementById(QUIZ_JEV_ID) || quizJevCtxAtual !== contexto) return;
     var payload = { raw: raw };
     var temImagem = false;
@@ -1100,6 +1187,17 @@ function quizJevProcessarComCard(raw, range, rect, ctxCard, transporte) {
       imagemFalhou = true;
     }
 
+    if (QUIZ_JEV_MODO === "jev") {
+      try {
+        payload = quizJevPayloadJev(payload);
+      } catch (e) {
+        quizJevLimpar(card);
+        quizJevMontarErro(card, e && e.message);
+        quizJevPosicionar(card, rect);
+        return;
+      }
+    }
+
     quizJevLimpar(card);
     quizJevMontarCarregando(card, temImagem ? "Analisando a imagem" : "Consultando");
     quizJevPosicionar(card, rect);
@@ -1116,13 +1214,27 @@ function quizJevProcessarSemCard(raw, range, janela) {
         return true;
       })
     : Promise.resolve(null);
-  var payloadPromise = pImagem.then(function (img) {
+  var payloadPromise = pImagem.then(quizJevImagemParaModo).then(function (img) {
     var payload = { raw: raw };
     if (img && img.base64) {
       payload.imageBase64 = img.base64;
       payload.imageMime = img.mime;
     } else if (img && img.url) {
       payload.imageUrl = img.url;
+    }
+    if (QUIZ_JEV_MODO === "jev") {
+      try {
+        payload = quizJevPayloadJev(payload);
+      } catch (e) {
+        // Sem card pra mostrar o erro: avisa na página e fecha a janela de resposta.
+        quizJevAvisoSemCard(e && e.message);
+        try {
+          if (janela) janela.close();
+        } catch (e2) {
+          // janela já fechada
+        }
+        return null;
+      }
     }
     return payload;
   });
@@ -1203,8 +1315,16 @@ function quizJevProcessarPerguntaDireta() {
 function quizJevAbrirPerguntar() {
   if (!quizJevCtxAtual) return;
   var ctx = quizJevCtxAtual;
-  ctx.perguntando = true;
   var card = ctx.card;
+  if (QUIZ_JEV_MODO === "jev") {
+    // O Jev só escolhe alternativa: não há pergunta livre neste modo.
+    quizJevLimpar(card);
+    card.classList.remove("carregando-ativo");
+    quizJevMontarErro(card, "No modo Jev não há pergunta livre — ele só escolhe a alternativa. Para perguntar, use um favorito com chave Santos Tech.");
+    quizJevPosicionar(card, ctx.rect);
+    return;
+  }
+  ctx.perguntando = true;
   quizJevLimpar(card);
   card.classList.remove("carregando-ativo");
   card.classList.add("aberta");

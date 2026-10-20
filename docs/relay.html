@@ -25,6 +25,7 @@
 <div class="card" id="card" style="display:none"></div>
 
 <script src="quiz-render.js"></script>
+<script src="quiz-jev-direto.js"></script>
 <script>
 (function () {
   "use strict";
@@ -66,10 +67,26 @@
   //   - exibição (sem `ponte`): a resposta aparece aqui mesmo. É o que os
   //     favoritos instalados antes da ponte mandam, e o caso "sem card"
   //     do bookmarklet atual — precisa continuar funcionando.
+  // Modo Jev: { key, jev: { url, corpo, opcoes, generico, precisaHeaderImagem } } —
+  // o pedido já vem montado pelo bookmarklet (sem `raw`); a chave é a do Jev e o
+  // destino é o proxy (Worker), só https e só o caminho /v1/systemone.
+  function formatoJevValido(d) {
+    var j = d.jev;
+    if (!j || typeof j !== "object") return false;
+    if (typeof j.url !== "string" || !/^https:\/\/[^\/]+\/v1\/systemone$/.test(j.url)) return false;
+    if (!j.corpo || typeof j.corpo !== "object") return false;
+    if (!j.opcoes || typeof j.opcoes !== "object") return false;
+    return true;
+  }
+
   function formatoValido(d) {
     if (!d || typeof d !== "object") return false;
-    if (typeof d.raw !== "string" || !d.raw) return false;
     if (typeof d.key !== "string" || !d.key) return false;
+    if (d.jev !== undefined) {
+      if (d.ponte !== undefined && (d.ponte !== true || typeof d.id !== "string" || !d.id)) return false;
+      return formatoJevValido(d);
+    }
+    if (typeof d.raw !== "string" || !d.raw) return false;
     if (d.ask !== undefined && typeof d.ask !== "string") return false;
     if (d.imageBase64 !== undefined && typeof d.imageBase64 !== "string") return false;
     if (d.imageUrl !== undefined && typeof d.imageUrl !== "string") return false;
@@ -100,7 +117,24 @@
     }, 150);
   }
 
-  function processarMensagem(d, origem) {
+  // Consulta pelo proxy do Jev e já devolve a resposta no formato do card.
+  function consultarJev(d) {
+    var cabecalhos = { "Content-Type": "application/json", Authorization: "Bearer " + d.key };
+    if (d.jev.precisaHeaderImagem) cabecalhos["TypeSafe-Danger-Zone-Images"] = "true";
+    return fetch(d.jev.url, { method: "POST", headers: cabecalhos, body: JSON.stringify(d.jev.corpo) }).then(function (res) {
+      return res
+        .json()
+        .catch(function () {
+          return {};
+        })
+        .then(function (data) {
+          if (!res.ok) throw new Error(quizJevMensagemHttpJev(res.status));
+          return quizJevInterpretarRespostaJev(data, d.jev.opcoes, d.jev.generico);
+        });
+    });
+  }
+
+  function consultarApiGo(d) {
     var payload = { raw: d.raw };
     if (d.ask) payload.ask = d.ask;
     if (d.imageBase64) {
@@ -109,24 +143,27 @@
     } else if (d.imageUrl) {
       payload.imageUrl = d.imageUrl;
     }
-    var comImagem = !!(d.imageBase64 || d.imageUrl);
-
-    fetch(API, {
+    return fetch(API, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Quiz-Key": d.key },
       body: JSON.stringify(payload),
-    })
-      .then(function (res) {
-        return res
-          .json()
-          .catch(function () {
-            return {};
-          })
-          .then(function (data) {
-            if (!res.ok) throw new Error((data && data.message) || "erro " + res.status);
-            return data;
-          });
-      })
+    }).then(function (res) {
+      return res
+        .json()
+        .catch(function () {
+          return {};
+        })
+        .then(function (data) {
+          if (!res.ok) throw new Error((data && data.message) || "erro " + res.status);
+          return data;
+        });
+    });
+  }
+
+  function processarMensagem(d, origem) {
+    var comImagem = d.jev ? !!d.jev.precisaHeaderImagem : !!(d.imageBase64 || d.imageUrl);
+
+    (d.jev ? consultarJev(d) : consultarApiGo(d))
       .then(function (data) {
         if (d.ponte && responderAoOpener(origem, { type: "quizjev-resposta", id: d.id, ok: true, data: data })) {
           fecharEmBreve();

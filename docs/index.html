@@ -119,6 +119,25 @@
     </details>
   </div>
 
+  <div class="card">
+    <h2>Ou use a chave do Jev (sem login)</h2>
+    <p class="aviso-arrastar">
+      Gere o favorito com a sua chave da TypeSafe (<code class="inline">apikey_...</code>). O Jev só aceita chamadas de
+      navegador vindas do painel dele, então o favorito fala com ele por um <strong>proxy seu</strong> (um Cloudflare
+      Worker, em <code class="inline">worker/</code> neste repositório). Neste modo o Jev só
+      <strong>escolhe a alternativa</strong> (com as probabilidades): não há explicação nem pergunta livre. A chave fica
+      dentro do favorito, e esta página não guarda nada — use uma chave com limite de gasto.
+    </p>
+    <label for="campo-chave-jev">Chave do Jev (começa com <code class="inline">apikey_</code>)</label>
+    <input type="text" id="campo-chave-jev" placeholder="apikey_..." autocomplete="off" spellcheck="false" />
+    <label for="campo-proxy" style="margin-top:10px">Endereço do proxy</label>
+    <input type="text" id="campo-proxy" placeholder="https://quiz-jev-proxy.SEU-USUARIO.workers.dev" autocomplete="off" spellcheck="false" />
+    <div class="linha-botao">
+      <button id="botao-gerar-jev" type="button">Gerar favorito (modo Jev)</button>
+      <span id="erro-jev" class="erro-campo" role="alert"></span>
+    </div>
+  </div>
+
   <div class="card resultado" id="bloco-resultado">
     <h2>2. Arraste para a barra de favoritos</h2>
     <p class="aviso-arrastar">Arraste o botão azul abaixo para a barra de favoritos do navegador (se ela estiver escondida, <kbd>Ctrl+Shift+B</kbd> no Chrome ou <kbd>Ctrl+Shift+B</kbd> no Firefox mostra/esconde).</p>
@@ -220,9 +239,42 @@
     montarFavorito(chave, erroCampo);
   }
 
+  // ---- Modo Jev: chave da TypeSafe + proxy ----
+  // Endereço do Worker publicado (worker/); vazio = o usuário cola o dele.
+  var PROXY_PADRAO = "https://quiz-jev-proxy.guibferrarezi.workers.dev";
+  var RE_CHAVE_JEV = /^apikey_[A-Za-z0-9_-]{20,}$/;
+  // Só https e sem aspas/barra invertida/espaço: o endereço entra DENTRO de uma
+  // string do código do favorito.
+  var RE_PROXY = /^https:\/\/[^\s"'\\<>]+$/;
+
+  var campoChaveJev = document.getElementById("campo-chave-jev");
+  var campoProxy = document.getElementById("campo-proxy");
+  var botaoGerarJev = document.getElementById("botao-gerar-jev");
+  var erroJev = document.getElementById("erro-jev");
+  campoProxy.value = PROXY_PADRAO;
+
+  function gerarJev() {
+    var chave = campoChaveJev.value.trim();
+    var proxy = campoProxy.value.trim().replace(/\/+$/, "");
+    erroJev.classList.remove("visivel");
+    if (!RE_CHAVE_JEV.test(chave)) {
+      erroJev.textContent = "Isso não parece uma chave do Jev (apikey_...).";
+    } else if (!RE_PROXY.test(proxy)) {
+      erroJev.textContent = "Informe o endereço https:// do proxy (o Worker).";
+    } else {
+      erroJev.textContent = "";
+      montarFavorito(chave, erroJev, { modo: "jev", proxy: proxy });
+      return;
+    }
+    erroJev.classList.add("visivel");
+    blocoResultado.classList.remove("visivel");
+  }
+  botaoGerarJev.addEventListener("click", gerarJev);
+
   // Monta o favorito com a chave (já validada). `ondeErro` é onde avisar se
-  // o template não carregou. Retorna true se deu certo.
-  function montarFavorito(chave, ondeErro) {
+  // o template não carregou; `extras` ({modo, proxy}) é só do modo Jev — sem ele
+  // o favorito é o normal, com chave Santos Tech. Retorna true se deu certo.
+  function montarFavorito(chave, ondeErro, extras) {
     var template = window.QUIZ_JEV_BOOKMARKLET_TEMPLATE;
     if (!template || template.indexOf("__QUIZ_KEY__") === -1) {
       ondeErro.textContent = "Não consegui carregar o código do bookmarklet (bookmarklet.min.js). Recarregue a página.";
@@ -233,7 +285,12 @@
     // template (var QUIZ_KEY = "__QUIZ_KEY__";), e RE_CHAVE só aceita
     // letras/números/_/- — não há aspas nem barra invertida na chave pra
     // escapar.
-    var codigo = template.split("__QUIZ_KEY__").join(chave);
+    var modo = (extras && extras.modo) || "qz";
+    var proxy = (extras && extras.proxy) || "";
+    var codigo = template
+      .split("__QUIZ_KEY__").join(chave)
+      .split("__QUIZ_MODO__").join(modo)
+      .split("__QUIZ_PROXY__").join(proxy);
     // encodeURI (+ o "#", que ele deixa passar e viraria fragmento) em vez de
     // encodeURIComponent: o código cresceu com a captura de aba e, codificado
     // por inteiro, o link passaria dos ~64 KB que alguns navegadores aceitam

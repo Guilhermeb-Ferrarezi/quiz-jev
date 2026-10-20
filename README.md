@@ -87,6 +87,34 @@ não capturam "esta aba", então lá só valem as imagens do passo (1); a costur
 só vertical (o que passar da largura da tela fica de fora); e a captura de aba
 não existe nos navegadores de celular — no celular, use o app.
 
+**Modo Jev (chave da TypeSafe, sem login nem api-go).** A página de instalação
+também gera o favorito com a **chave do Jev** (`apikey_...`). O favorito monta o
+pedido ao Jev sozinho (separa enunciado e alternativas, manda a imagem como
+`asset`) e mostra a alternativa com as probabilidades. Fica de fora tudo que
+precisa de servidor: o segundo estágio (LLM), a explicação e a pergunta livre
+(`T`/`Alt+Shift+Q` avisam que não existem nesse modo). Sem alternativas no texto
+mas com imagem, vale A–E mais "Ilegível". Quem precisa dessas coisas usa o
+favorito normal (chave Santos Tech).
+
+**Por que existe um proxy.** A API do Jev só libera CORS para a origem do painel
+dela (`Disallowed CORS origin` para qualquer outra), então nenhum navegador a
+chama direto, nem de um site de prova nem do GitHub Pages. O favorito fala com um
+Cloudflare Worker (`worker/`), que repassa a `api.typesafe.ai/v1/systemone` e
+devolve com CORS liberado. O Worker **não guarda chave** (ela vem no
+`Authorization` de cada chamada e só passa), não registra nada, tem destino e
+caminho fixos e limita o corpo a 12 MB. O endereço padrão da página é
+`https://quiz-jev-proxy.guibferrarezi.workers.dev`; para ter o seu:
+
+```bash
+cd worker
+bun x wrangler login     # uma vez
+bun x wrangler deploy
+```
+
+e cole o endereço que ele imprimir no campo "Endereço do proxy" da página. A
+chave do Jev fica **dentro do favorito** (quem tiver acesso ao seu navegador a
+enxerga): use uma chave com limite de gasto.
+
 **Atalho de teclado.** Depois do primeiro uso numa página, `Alt+Q` e
 `Alt+Shift+Q` funcionam sem clicar de novo. Para o primeiro uso também sem mouse:
 no Chrome/Edge, deixe o favorito na **primeira posição** da barra e use
@@ -109,15 +137,18 @@ de mexer nas fontes.
 Testes (precisam do [Bun](https://bun.sh); o segundo também do Chrome):
 
 ```bash
-bun test bookmarklet/captura.test.js     # contas da captura: recorte, escala, costura
-bun bookmarklet/e2e/captura-e2e.mjs      # Chrome de verdade: tabela, costura, imagens empilhadas
+bun test                                 # captura.test.js, jev-direto.test.js e worker/index.test.js
+bun bookmarklet/e2e/captura-e2e.mjs      # Chrome de verdade, modo normal e modo Jev
 ```
 
-O teste ponta a ponta sobe uma página de prova local, roda o bookmarklet gerado
-num Chrome com a captura de aba autorizada e **intercepta** a chamada à API
-(nada chega ao servidor): confere a imagem que seria enviada, inclusive que a
-costura não deixa vão. As imagens saem na pasta temporária (ou em
-`QUIZJEV_E2E_SAIDA`) para conferir a olho. Rode `bun bookmarklet/build.js` antes.
+O teste ponta a ponta sobe uma página de prova local e roda o bookmarklet gerado
+num Chrome com a captura de aba autorizada. No modo normal **intercepta** a
+chamada ao api-go; no modo Jev aponta o favorito para um proxy falso local.
+Nenhum dos dois fala com servidor de verdade: confere o que o favorito
+mandaria (imagem, chave, cabeçalhos, alternativas) e o que o card mostra,
+inclusive que a costura não deixa vão. As imagens saem na pasta temporária (ou
+em `QUIZJEV_E2E_SAIDA`) para conferir a olho. Rode `bun bookmarklet/build.js`
+antes.
 
 ## Extensão de navegador
 

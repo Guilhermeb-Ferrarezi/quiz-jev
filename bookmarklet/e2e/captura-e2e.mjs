@@ -1,12 +1,13 @@
-// Teste ponta a ponta da captura de imagem do bookmarklet, num Chrome de
-// verdade:  bun bookmarklet/e2e/captura-e2e.mjs
+// Teste ponta a ponta do bookmarklet num Chrome de verdade:
+//   bun bookmarklet/e2e/captura-e2e.mjs
 //
 // Sobe uma página de prova local, abre o Chrome com a captura de aba
 // autorizada (--auto-accept-this-tab-capture), roda o bookmarklet gerado
-// (docs/bookmarklet.min.js — rode `bun bookmarklet/build.js` antes) e
-// INTERCEPTA a chamada à API: nada chega ao servidor, a resposta é falsa. O que
-// se confere é a imagem que o bookmarklet MANDARIA. As imagens saem em
-// $QUIZJEV_E2E_SAIDA (padrão: a pasta temporária) pra olhar a olho.
+// (docs/bookmarklet.min.js — rode `bun bookmarklet/build.js` antes) e NÃO fala com
+// servidor nenhum: no modo normal INTERCEPTA a chamada ao api-go; no modo Jev
+// aponta o favorito para um proxy falso local. Em ambos o que se confere é o que o
+// favorito MANDARIA (imagem, chave, cabeçalhos) e o que o card MOSTRA. As imagens
+// saem em $QUIZJEV_E2E_SAIDA (padrão: a pasta temporária) pra olhar a olho.
 //
 // Variáveis: CHROME (caminho do executável), HEADFUL=1 (janela visível).
 
@@ -30,7 +31,7 @@ const PAGINAS = {
     <p>Observe a tabela e responda: qual produto teve a maior venda?</p>
     <table border="1" style="border-collapse:collapse;width:420px"><tr><th>Produto</th><th>Vendas</th></tr>
       <tr><td>Caneta</td><td>120</td></tr><tr><td>Lápis</td><td>340</td></tr></table>
-    <p>A) Caneta<br>B) Lápis<br>C) Borracha<br>D) Régua</p></div>
+    A) Caneta<br>B) Lápis<br>C) Borracha<br>D) Régua</div>
     <div style="height:2000px"></div></body>`,
   // Tabela alta: não cabe na tela, obriga a rolar e costurar. Cada linha tem o número.
   "/alta": `<body style="${estilo}"><div style="height:300px">espaço antes</div><div id="q">
@@ -57,6 +58,8 @@ const PAGINAS = {
     </script></body>`,
   "/texto": `<body style="${estilo}"><div id="q"><p>Qual é a capital da Austrália?</p>
     <p>A) Sydney<br>B) Melbourne<br>C) Canberra<br>D) Perth</p></div></body>`,
+  "/sem-alternativas": `<body style="${estilo}"><div id="q"><p>Explique, com suas palavras, como funciona a fotossíntese.</p>
+    <p>Responda em um parágrafo curto.</p><p>Valor: 2 pontos.</p></div></body>`,
 };
 
 const servidor = Bun.serve({
@@ -68,6 +71,32 @@ const servidor = Bun.serve({
   },
 });
 const BASE = `http://127.0.0.1:${servidor.port}`;
+
+// ---- Proxy do Jev falso (modo Jev) ----
+// Grava cada pedido e responde no formato do Jev. A chave "apikey_e2e_ok" é a
+// válida; qualquer outra leva 401.
+const CHAVE_JEV_OK = "apikey_e2e_ok_" + "x".repeat(30);
+const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization,content-type,typesafe-danger-zone-images", "access-control-allow-methods": "POST,OPTIONS" };
+// CORS do api-go interceptado (modo normal): o favorito manda X-Quiz-Key.
+const CORS_API_GO = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-quiz-key", "access-control-allow-methods": "POST,OPTIONS,HEAD" };
+const pedidosProxy = [];
+const proxy = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  async fetch(req) {
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if (req.method !== "POST") return new Response("ok", { headers: CORS });
+    const corpo = await req.json();
+    pedidosProxy.push({ cabecalhos: Object.fromEntries(req.headers), corpo });
+    if (req.headers.get("authorization") !== `Bearer ${CHAVE_JEV_OK}`) {
+      return Response.json({ message: "invalid key" }, { status: 401, headers: CORS });
+    }
+    const opcoes = Object.keys(corpo.questions.resposta.criteria).filter((k) => k !== "Ilegível");
+    const probs = Object.fromEntries(opcoes.map((o) => [o, o === "B" ? 0.9 : 0.1 / (opcoes.length - 1)]));
+    return Response.json({ model: "jev-1.13.0", answers: { resposta: { type: "choice", choice: "B", confidence: 0.85, probabilities: probs } } }, { headers: CORS });
+  },
+});
+const URL_PROXY = `http://127.0.0.1:${proxy.port}`;
 
 // ---- Chrome + CDP ----
 const PORTA_CDP = 9333;
@@ -135,11 +164,12 @@ function dimensoesPng(base64) {
   return { largura: b.readUInt32BE(16), altura: b.readUInt32BE(20), bytes: b.length };
 }
 
-const codigoBookmarklet = (() => {
+const template = (() => {
   const g = {};
   new Function("window", fs.readFileSync(path.join(RAIZ, "docs", "bookmarklet.min.js"), "utf8"))(g);
-  return g.QUIZ_JEV_BOOKMARKLET_TEMPLATE.split("__QUIZ_KEY__").join("qz_e2etestkey1234567890");
+  return g.QUIZ_JEV_BOOKMARKLET_TEMPLATE;
 })();
+const montarCodigo = (modo, chave, endereco) => template.split("__QUIZ_KEY__").join(chave).split("__QUIZ_MODO__").join(modo).split("__QUIZ_PROXY__").join(endereco);
 
 const RESPOSTA_FALSA = {
   kind: "unica",
@@ -174,7 +204,19 @@ async function linhasBrancas(cdp, base64, x0, x1, margemTopo, margemBase) {
   return r.result.value;
 }
 
-async function cenario(nome, caminho, analise) {
+// O que o card mostra (ele vive num Shadow DOM aberto).
+const LER_CARD = `(() => {
+  const h = document.getElementById("__quiz-jev-bookmarklet"); if (!h) return null;
+  const s = h.shadowRoot, q = (sel) => { const e = s.querySelector(sel); return e ? e.textContent : null; };
+  return { letra: q(".letra"), erro: q(".erro"), texto: q(".card") };
+})()`;
+
+// opcoes: { modo: "qz" | "jev", chave, analise(cdp, imagemBase64), aposRodar(cdp) }
+async function cenario(nome, caminho, opcoes = {}) {
+  const modo = opcoes.modo || "qz";
+  const chave = opcoes.chave || (modo === "jev" ? CHAVE_JEV_OK : "qz_e2etestkey1234567890");
+  const codigo = montarCodigo(modo, chave, modo === "jev" ? URL_PROXY : "");
+
   const aba = await (await fetch(`http://127.0.0.1:${PORTA_CDP}/json/new?${BASE}${caminho}`, { method: "PUT" })).json();
   const cdp = conectar(aba.webSocketDebuggerUrl);
   await cdp.pronto;
@@ -184,22 +226,23 @@ async function cenario(nome, caminho, analise) {
   await cdp.enviar("Page.bringToFront");
   await cdp.enviar("Fetch.enable", { patterns: [{ urlPattern: "https://api.santos-tech.com/*" }] });
 
-  const posts = [];
+  const postsApiGo = [];
+  const errosPagina = [];
   cdp.aoEvento(async (msg) => {
+    if (msg.method === "Runtime.exceptionThrown") errosPagina.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
     if (msg.method !== "Fetch.requestPaused") return;
     const { requestId, request, networkId } = msg.params;
-    const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type,x-quiz-key", "access-control-allow-methods": "POST,HEAD,OPTIONS" };
     const responder = (status, corpo) =>
       cdp.enviar("Fetch.fulfillRequest", {
         requestId,
         responseCode: status,
-        responseHeaders: Object.entries({ ...cors, "content-type": "application/json" }).map(([name, value]) => ({ name, value })),
+        responseHeaders: Object.entries({ ...CORS_API_GO, "content-type": "application/json" }).map(([name, value]) => ({ name, value })),
         body: Buffer.from(corpo || "").toString("base64"),
       });
     if (request.method === "POST") {
       let corpo = request.postData;
       if (corpo === undefined && request.hasPostData) corpo = (await cdp.enviar("Network.getRequestPostData", { requestId: networkId })).postData;
-      posts.push(JSON.parse(corpo));
+      postsApiGo.push(JSON.parse(corpo));
       await responder(200, JSON.stringify(RESPOSTA_FALSA));
     } else {
       await responder(request.method === "OPTIONS" ? 204 : 200, "");
@@ -214,13 +257,19 @@ async function cenario(nome, caminho, analise) {
   await Bun.sleep(300);
   const viewport = (await cdp.enviar("Runtime.evaluate", { expression: "[innerWidth, innerHeight]", returnByValue: true })).result.value;
   await cdp.enviar("Runtime.evaluate", { expression: `getSelection().selectAllChildren(document.getElementById("q")); 1` });
-  // userGesture: o getDisplayMedia só abre com ativação do usuário.
-  const t0 = Date.now();
-  await cdp.enviar("Runtime.evaluate", { expression: codigoBookmarklet, userGesture: true });
 
-  for (let i = 0; i < 300 && !posts.length; i++) await Bun.sleep(100);
+  const antesProxy = pedidosProxy.length;
+  const t0 = Date.now();
+  // userGesture: o getDisplayMedia só abre com ativação do usuário.
+  await cdp.enviar("Runtime.evaluate", { expression: codigo, userGesture: true });
+  if (opcoes.aposRodar) await opcoes.aposRodar(cdp);
+
+  const enviado = () => (modo === "jev" ? pedidosProxy.length > antesProxy : postsApiGo.length > 0);
+  // Cenários que nem chegam a consultar (erro antes) esperam o card mostrar algo.
+  for (let i = 0; i < 300 && !enviado() && !(opcoes.semConsulta && i > 15); i++) await Bun.sleep(100);
   const ms = Date.now() - t0;
   await Bun.sleep(1200); // deixa o card mostrar a resposta
+  const card = (await cdp.enviar("Runtime.evaluate", { expression: LER_CARD, returnByValue: true })).result.value;
   const shot = await cdp.enviar("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(SAIDA, `${nome}-pagina.png`), Buffer.from(shot.data, "base64"));
 
@@ -231,18 +280,34 @@ async function cenario(nome, caminho, analise) {
       returnByValue: true,
     })
   ).result.value;
-  const resultado = { nome, viewport, medidas, ms, enviou: posts.length > 0 };
-  if (posts.length) {
-    const p = posts[0];
-    resultado.temTexto = !!p.raw;
-    resultado.temImagem = !!p.imageBase64;
-    resultado.temUrl = !!p.imageUrl;
-    if (p.imageBase64) {
-      resultado.imagem = p.imageMime === "image/png" ? dimensoesPng(p.imageBase64) : { mime: p.imageMime };
-      fs.writeFileSync(path.join(SAIDA, `${nome}-enviada.${p.imageMime === "image/png" ? "png" : "jpg"}`), Buffer.from(p.imageBase64, "base64"));
+
+  const resultado = { nome, viewport, medidas, ms, enviou: enviado(), card, errosPagina };
+  if (enviado()) {
+    // No modo Jev, a imagem é o asset do pedido; no normal, imageBase64.
+    let post, base64, mime;
+    if (modo === "jev") {
+      post = pedidosProxy[antesProxy];
+      resultado.jev = { cabecalhos: post.cabecalhos, corpo: post.corpo };
+      const asset = post.corpo.assets && Object.values(post.corpo.assets)[0];
+      if (asset) {
+        base64 = asset.data_base64;
+        mime = "image/" + (asset.format === "jpeg" ? "jpeg" : "png");
+      }
+      resultado.temTexto = !!post.corpo.state;
+    } else {
+      post = postsApiGo[0];
+      base64 = post.imageBase64;
+      mime = post.imageMime;
+      resultado.temTexto = !!post.raw;
+      resultado.temUrl = !!post.imageUrl;
+    }
+    resultado.temImagem = !!base64;
+    if (base64) {
+      resultado.imagem = mime === "image/png" ? dimensoesPng(base64) : { mime };
+      fs.writeFileSync(path.join(SAIDA, `${nome}-enviada.${mime === "image/png" ? "png" : "jpg"}`), Buffer.from(base64, "base64"));
+      if (opcoes.analise) resultado.extra = await opcoes.analise(cdp, base64);
     }
   }
-  if (analise && posts.length && posts[0].imageBase64) resultado.extra = await analise(cdp, posts[0].imageBase64);
   cdp.fechar();
   await fetch(`http://127.0.0.1:${PORTA_CDP}/json/close/${aba.id}`);
   return resultado;
@@ -257,6 +322,8 @@ function conferir(condicao, mensagem) {
 try {
   await esperarCdp();
 
+  console.log("== MODO NORMAL (api-go interceptado) ==");
+
   console.log("texto puro (controle: não deve haver imagem nem pedido de captura)");
   const texto = await cenario("texto", "/texto");
   conferir(texto.enviou && texto.temTexto && !texto.temImagem, "enviou só o texto");
@@ -269,7 +336,7 @@ try {
   console.log("tabela alta (rola e costura)");
   // A tabela ocupa x ~10..380 da imagem; o parágrafo de cima e as alternativas
   // de baixo ficam fora da conta (margens).
-  const alta = await cenario("alta", "/alta", (cdp, b64) => linhasBrancas(cdp, b64, 10, 380, 45, 120));
+  const alta = await cenario("alta", "/alta", { analise: (cdp, b64) => linhasBrancas(cdp, b64, 10, 380, 45, 120) });
   console.log(`  [innerW, innerH, quadroW, quadroH, dpr] = ${JSON.stringify(alta.medidas)}  antes: ${JSON.stringify(alta.viewport)}`);
   conferir(alta.enviou && alta.temImagem, `enviou imagem (${JSON.stringify(alta.imagem)})`);
   if (alta.imagem?.altura) conferir(alta.imagem.altura > alta.viewport[1], "a imagem costurada é mais alta que a tela");
@@ -280,10 +347,55 @@ try {
   conferir(imagens.enviou && imagens.temImagem, `enviou imagem (${JSON.stringify(imagens.imagem)})`);
   if (imagens.imagem?.altura) conferir(imagens.imagem.altura >= 230 && imagens.imagem.altura <= 250, "as duas figuras estão uma sobre a outra (~240 px de altura)");
 
+  console.log("\n== MODO JEV (proxy falso local) ==");
+
+  console.log("texto com alternativas: vai ao Jev como choice, sem imagem");
+  const jTexto = await cenario("jev-texto", "/texto", { modo: "jev" });
+  conferir(jTexto.enviou, "chegou ao proxy");
+  if (jTexto.jev) {
+    const c = jTexto.jev.corpo;
+    conferir(jTexto.jev.cabecalhos.authorization === `Bearer ${CHAVE_JEV_OK}`, "mandou a chave do Jev em Authorization: Bearer");
+    conferir(typeof c.state === "string" && c.state.includes("capital da Austrália"), "o estado é o enunciado");
+    conferir(JSON.stringify(Object.keys(c.questions.resposta.criteria)) === JSON.stringify(["A", "B", "C", "D"]) && c.questions.resposta.criteria.C === "Canberra", "as alternativas viraram critérios (A–D, com o texto)");
+    conferir(!c.assets && !jTexto.jev.cabecalhos["typesafe-danger-zone-images"], "sem imagem: nada de assets nem do header de imagem");
+  }
+  conferir(jTexto.card?.letra === "B" && !jTexto.card?.erro, `o card mostra a alternativa B (${JSON.stringify(jTexto.card?.letra)})`);
+
+  console.log("tabela + alternativas: manda o print como asset PNG, com o header de imagem");
+  const jTabela = await cenario("jev-tabela", "/tabela", { modo: "jev" });
+  conferir(jTabela.enviou && jTabela.temImagem, `enviou imagem (${JSON.stringify(jTabela.imagem)})`);
+  if (jTabela.jev) {
+    const c = jTabela.jev.corpo;
+    conferir(jTabela.jev.cabecalhos["typesafe-danger-zone-images"] === "true", "mandou TypeSafe-Danger-Zone-Images: true");
+    conferir(Array.isArray(c.state) && Object.keys(c.assets).includes(c.state[1]), "o marcador do estado aponta pro asset");
+    conferir(Object.values(c.assets)[0].format === "png", "o asset é PNG");
+  }
+  conferir(jTabela.card?.letra === "B", "o card mostra a alternativa");
+
+  console.log("chave recusada (401): mensagem clara no card");
+  const jRuim = await cenario("jev-chave-ruim", "/texto", { modo: "jev", chave: "apikey_errada_" + "y".repeat(30) });
+  conferir(jRuim.enviou && /chave do Jev foi recusada/i.test(jRuim.card?.erro || ""), `card: ${JSON.stringify(jRuim.card?.erro)}`);
+
+  console.log("texto sem alternativas e sem imagem: erro claro, sem gastar chamada");
+  const jSem = await cenario("jev-sem-alternativas", "/sem-alternativas", { modo: "jev", semConsulta: true });
+  conferir(!jSem.enviou && /só escolhe entre alternativas/i.test(jSem.card?.erro || ""), `card: ${JSON.stringify(jSem.card?.erro)}`);
+
+  console.log("tecla T (pergunta livre): explica que não existe no modo Jev");
+  const jT = await cenario("jev-tecla-t", "/texto", {
+    modo: "jev",
+    aposRodar: async (cdp) => {
+      await Bun.sleep(2500);
+      // O listener de teclado do card olha e.key; dispara um T no documento.
+      await cdp.enviar("Runtime.evaluate", { expression: `document.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true, cancelable: true })); 1` });
+    },
+  });
+  conferir(/não há pergunta livre/i.test(jT.card?.erro || ""), `card: ${JSON.stringify(jT.card?.erro)}`);
+
   console.log(`\nimagens e capturas em: ${SAIDA}`);
 } finally {
   chrome.kill();
   servidor.stop(true);
+  proxy.stop(true);
   await Bun.sleep(500);
   try {
     fs.rmSync(perfil, { recursive: true, force: true });
