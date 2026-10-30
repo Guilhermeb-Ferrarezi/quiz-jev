@@ -424,3 +424,10 @@ test("letra separada: fora de sequência não vale", () => {
 test("letra separada: alternativa sem letra que começa com A, B… não perde a primeira letra", () => {
   expect(quizJevSepararQuestao("Qual a cor?\nAzul\nBranco").opcoes).toEqual({ A: "Azul", B: "Branco" });
 });
+
+test("letra separada: letra minúscula sozinha na linha (maiúscula só no CSS)", () => {
+  const raw = "(UFRGS-RS) Leia o segmento abaixo.\n\nEstes líderes [...].\n\nAssinale a alternativa correta que apresenta essa categoria.\n\n    a\n\n    Chapetones\n\n    b\n\n    Inconfidentes\n\n    c\n\n    Criollos\n\n    d\n\n    Alcaldes\n\n    e\n\n    Caudilhos";
+  const q = quizJevSepararQuestao(raw);
+  expect(q.opcoes).toEqual(UFRGS_OPCOES);
+  expect(q.pergunta).toBe("(UFRGS-RS) Leia o segmento abaixo. Estes líderes [...]. Assinale a alternativa correta que apresenta essa categoria.");
+});

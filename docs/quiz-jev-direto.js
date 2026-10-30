@@ -66,14 +66,16 @@ function quizJevSepararComRotulo(linhas) {
 // "AChapetones", sem parêntese nem ponto. Só vale se as ÚLTIMAS linhas começam
 // com A, B, C… em sequência, contando de trás pra frente até o A — uma frase do
 // enunciado que comece com "A" não basta.
-var QUIZ_JEV_RE_LETRA_SOZINHA = /^\(?([A-E])\s*[\)\.\-:]?$/;
+// Minúscula vale só sozinha na linha: muita página guarda "a" no HTML e mostra
+// "A" com text-transform. Na mesma linha do texto, "a" é artigo, não rótulo.
+var QUIZ_JEV_RE_LETRA_SOZINHA = /^\(?([A-Ea-e])\s*[\)\.\-:]?$/;
 
 function quizJevSepararLetraSeparada(linhas) {
   var juntas = [];
   for (var i = 0; i < linhas.length; i++) {
     var m = QUIZ_JEV_RE_LETRA_SOZINHA.exec(linhas[i]);
     if (m && i + 1 < linhas.length && !QUIZ_JEV_RE_LETRA_SOZINHA.test(linhas[i + 1])) {
-      juntas.push(m[1] + " " + linhas[i + 1]);
+      juntas.push(m[1].toUpperCase() + " " + linhas[i + 1]);
       i++;
     } else {
       juntas.push(linhas[i]);
