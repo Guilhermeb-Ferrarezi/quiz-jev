@@ -61,9 +61,21 @@ function quizJevSepararComRotulo(linhas) {
   return { pergunta: enunciado.join(" "), opcoes: opcoes, ordem: ordem };
 }
 
+// Sem rótulo, o enunciado acaba na última linha que termina em "?" ou ":"
+// ("…podemos afirmar que:") e o resto são as alternativas, uma por linha. O
+// enunciado pode ter mais de uma linha (texto de apoio + pergunta).
+var QUIZ_JEV_RE_FIM_ENUNCIADO = /[?:]$/;
+
 function quizJevSepararSemRotulo(linhas) {
-  if (linhas[0].charAt(linhas[0].length - 1) !== "?") return null;
-  var alternativas = linhas.slice(1);
+  var fim = -1;
+  for (var j = linhas.length - 1 - QUIZ_JEV_MIN_ALTERNATIVAS; j >= 0; j--) {
+    if (QUIZ_JEV_RE_FIM_ENUNCIADO.test(linhas[j])) {
+      fim = j;
+      break;
+    }
+  }
+  if (fim < 0) return null;
+  var alternativas = linhas.slice(fim + 1);
   if (alternativas.length < QUIZ_JEV_MIN_ALTERNATIVAS || alternativas.length > QUIZ_JEV_MAX_ALTERNATIVAS) return null;
   var opcoes = {};
   var ordem = [];
@@ -72,7 +84,7 @@ function quizJevSepararSemRotulo(linhas) {
     opcoes[rotulo] = alternativas[i];
     ordem.push(rotulo);
   }
-  return { pergunta: linhas[0], opcoes: opcoes, ordem: ordem };
+  return { pergunta: linhas.slice(0, fim + 1).join(" "), opcoes: opcoes, ordem: ordem };
 }
 
 // Separa o texto selecionado em enunciado + alternativas (mesma lógica de

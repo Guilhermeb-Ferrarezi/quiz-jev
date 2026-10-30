@@ -157,6 +157,25 @@ test("sem rótulo: só vale se a primeira linha é uma pergunta", () => {
   expect(quizJevSepararQuestao("Uma lista qualquer\nmaçã\nbanana")).toBeNull();
 });
 
+test("sem rótulo: enunciado terminado em dois-pontos também vale", () => {
+  const q = quizJevSepararQuestao(
+    "(Cefet-RJ) Sobre a independência das colônias espanholas, podemos afirmar que:\n\n" +
+      "nas colônias espanholas foi mais elitista.\n\n" +
+      "a escravidão no Brasil foi abolida.\n\n" +
+      "a República foi o sistema mais aceito.\n\n" +
+      "no Brasil não houve esfacelamento do território."
+  );
+  expect(q.pergunta).toBe("(Cefet-RJ) Sobre a independência das colônias espanholas, podemos afirmar que:");
+  expect(q.ordem).toEqual(["A", "B", "C", "D"]);
+  expect(q.opcoes.D).toBe("no Brasil não houve esfacelamento do território.");
+});
+
+test("sem rótulo: enunciado com texto de apoio antes da pergunta", () => {
+  const q = quizJevSepararQuestao("Leia o trecho.\nO céu estava limpo.\nQual a cor do céu?\nAzul\nVerde");
+  expect(q.pergunta).toBe("Leia o trecho. O céu estava limpo. Qual a cor do céu?");
+  expect(q.opcoes).toEqual({ A: "Azul", B: "Verde" });
+});
+
 // ---- Pedido ao Jev ----
 
 const OPCOES = { A: "Sydney", B: "Melbourne", C: "Canberra", D: "Perth" };
