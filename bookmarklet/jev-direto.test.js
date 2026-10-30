@@ -400,3 +400,27 @@ test("imagem grande é reduzida ao teto, e depois completada se ficar baixa", ()
   const larga = quizJevAjustarTamanhoJev(3120, 400);
   expect([larga.dw, larga.dh, larga.ch]).toEqual([1560, 200, 300]);
 });
+
+// ---- Letra num elemento à parte (círculo "A" ao lado do texto) ----
+const UFRGS_ENUNCIADO = "(UFRGS-RS) Leia o segmento abaixo.\nEstes líderes, geralmente de origem militar.\nAssinale a alternativa correta que apresenta essa categoria.";
+const UFRGS_OPCOES = { A: "Chapetones", B: "Inconfidentes", C: "Criollos", D: "Alcaldes", E: "Caudilhos" };
+
+test("letra separada: letra numa linha e o texto na seguinte", () => {
+  const q = quizJevSepararQuestao(UFRGS_ENUNCIADO + "\nA\n\nChapetones\nB\nInconfidentes\nC\nCriollos\nD\nAlcaldes\nE\nCaudilhos");
+  expect(q.opcoes).toEqual(UFRGS_OPCOES);
+  expect(q.pergunta).toBe(UFRGS_ENUNCIADO.split("\n").join(" "));
+});
+
+test("letra separada: letra e texto na mesma linha, com ou sem espaço", () => {
+  expect(quizJevSepararQuestao(UFRGS_ENUNCIADO + "\nA Chapetones\nB Inconfidentes\nC Criollos\nD Alcaldes\nE Caudilhos").opcoes).toEqual(UFRGS_OPCOES);
+  expect(quizJevSepararQuestao(UFRGS_ENUNCIADO + "\nAChapetones\nBInconfidentes\nCCriollos\nDAlcaldes\nECaudilhos").opcoes).toEqual(UFRGS_OPCOES);
+});
+
+test("letra separada: fora de sequência não vale", () => {
+  expect(quizJevSepararQuestao("Enunciado qualquer.\nAzul\nCéu\nBranco")).toBeNull();
+  expect(quizJevSepararQuestao("Enunciado qualquer.\nA Um\nC Dois")).toBeNull();
+});
+
+test("letra separada: alternativa sem letra que começa com A, B… não perde a primeira letra", () => {
+  expect(quizJevSepararQuestao("Qual a cor?\nAzul\nBranco").opcoes).toEqual({ A: "Azul", B: "Branco" });
+});

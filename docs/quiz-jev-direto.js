@@ -61,6 +61,52 @@ function quizJevSepararComRotulo(linhas) {
   return { pergunta: enunciado.join(" "), opcoes: opcoes, ordem: ordem };
 }
 
+// Letra num elemento à parte (círculo com "A" ao lado do texto): a seleção vem
+// como "A" numa linha e o texto na seguinte, ou como "A Chapetones" /
+// "AChapetones", sem parêntese nem ponto. Só vale se as ÚLTIMAS linhas começam
+// com A, B, C… em sequência, contando de trás pra frente até o A — uma frase do
+// enunciado que comece com "A" não basta.
+var QUIZ_JEV_RE_LETRA_SOZINHA = /^\(?([A-E])\s*[\)\.\-:]?$/;
+
+function quizJevSepararLetraSeparada(linhas) {
+  var juntas = [];
+  for (var i = 0; i < linhas.length; i++) {
+    var m = QUIZ_JEV_RE_LETRA_SOZINHA.exec(linhas[i]);
+    if (m && i + 1 < linhas.length && !QUIZ_JEV_RE_LETRA_SOZINHA.test(linhas[i + 1])) {
+      juntas.push(m[1] + " " + linhas[i + 1]);
+      i++;
+    } else {
+      juntas.push(linhas[i]);
+    }
+  }
+  // A alternativa A é a última linha que começa com "A"; dali até o fim tem que
+  // ser A, B, C… em ordem.
+  var inicio = -1;
+  for (var j = juntas.length - 1; j > 0 && inicio < 0; j--) {
+    if (juntas[j].charAt(0) === "A") inicio = j;
+  }
+  if (inicio < 0) return null;
+  var total = juntas.length - inicio;
+  if (total < QUIZ_JEV_MIN_ALTERNATIVAS || total > QUIZ_JEV_ROTULOS_GENERICOS.length) return null;
+  var opcoes = {};
+  var ordem = [];
+  for (var k = 0; k < total; k++) {
+    var linha = juntas[inicio + k];
+    var rotulo = String.fromCharCode(65 + k);
+    if (linha.charAt(0) !== rotulo) return null;
+    // Colada sem espaço ("AChapetones"), o texto tem que começar com maiúscula
+    // ou número: senão "Azul"/"Branco" viraria "zul"/"ranco".
+    var depois = linha.charAt(1);
+    var maiuscula = depois !== depois.toLowerCase() && depois === depois.toUpperCase();
+    if (!maiuscula && !/[\s\)\.\-:0-9]/.test(depois)) return null;
+    var texto = linha.slice(1).replace(/^\s*[\)\.\-:]?\s*/, "");
+    if (!texto) return null;
+    opcoes[rotulo] = texto;
+    ordem.push(rotulo);
+  }
+  return { pergunta: juntas.slice(0, inicio).join(" "), opcoes: opcoes, ordem: ordem };
+}
+
 // Sem rótulo, o enunciado acaba na última linha que termina em "?" ou ":"
 // ("…podemos afirmar que:") e o resto são as alternativas, uma por linha. O
 // enunciado pode ter mais de uma linha (texto de apoio + pergunta).
@@ -92,7 +138,7 @@ function quizJevSepararSemRotulo(linhas) {
 function quizJevSepararQuestao(raw) {
   var linhas = quizJevLimparLinhas(raw);
   if (linhas.length < QUIZ_JEV_MIN_ALTERNATIVAS + 1) return null;
-  return quizJevSepararComRotulo(linhas) || quizJevSepararSemRotulo(linhas);
+  return quizJevSepararComRotulo(linhas) || quizJevSepararLetraSeparada(linhas) || quizJevSepararSemRotulo(linhas);
 }
 
 // ---- Afirmativas para julgar ----
